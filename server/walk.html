@@ -16,9 +16,11 @@
   #banner.clear { background: var(--clear); }
   #banner.danger { background: var(--danger); }
   #banner.door { background: var(--door); }
-  #arrow { position: absolute; top: 10px; right: 12px; width: 84px; height: 84px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 60px; line-height: 84px; text-align: center; font-weight: 700; }
-  #arrow.turn { background: rgba(179,38,30,.85); }
-  #arrow.ahead { background: rgba(31,143,58,.85); }
+  /* Always in the layout; only its visibility changes, so nothing moves. */
+  #arrow { position: absolute; top: 10px; right: 12px; width: 84px; height: 84px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 60px; line-height: 84px; text-align: center; font-weight: 700; visibility: hidden; }
+  #arrow.turn { background: rgba(179,38,30,.85); visibility: visible; }
+  #arrow.ahead { background: rgba(31,143,58,.85); visibility: visible; }
+  #meta { height: 1.3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; }
   #panel { padding: 10px 14px 12px; display: grid; gap: 8px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   button { font: inherit; font-size: 18px; padding: 10px 18px; border: 0; border-radius: 10px; background: #2a6df4; color: #fff; }
@@ -35,7 +37,7 @@
 <body>
 <div id="stage">
   <video id="video" autoplay playsinline muted></video>
-  <div id="arrow" title="recommended direction">·</div>
+  <div id="arrow" title="recommended direction">↑</div>
   <div id="banner">tap start</div>
 </div>
 <div id="panel">
@@ -108,7 +110,7 @@ function frame() {
 }
 function showArrow(choice, conf) {
   const a = $("arrow");
-  a.textContent = ARROWS[choice] || "\u00b7";
+  if (choice) a.textContent = ARROWS[choice] || "?";
   a.className = choice === "go ahead" ? "ahead" : choice ? "turn" : "";
   a.title = choice ? choice + " " + Math.round(conf * 100) + "%" : "";
 }
@@ -151,7 +153,7 @@ async function step() {
     if (hazard.choice.startsWith("danger")) {
       const d2 = await decide(blob, {model: "jev-latest", state: STATE, samples: 1, questions: directionQuestion(hazard.choice)});
       showArrow(d2.answers.direction.choice, d2.answers.direction.confidence);
-      $("meta").textContent += " · " + d2.answers.direction.choice + " " + Math.round(d2.answers.direction.confidence * 100) + "% · " + Math.round(performance.now() - t0) + " ms total";
+      $("meta").textContent += " · " + Math.round(performance.now() - t0) + " ms with turn";
     } else {
       showArrow("go ahead", hazard.confidence);
     }
@@ -165,11 +167,11 @@ async function step() {
 $("toggle").onclick = async () => {
   if (running) {
     running = false; $("toggle").textContent = "Start"; $("toggle").className = "";
-    $("banner").textContent = "stopped"; $("banner").className = ""; $("arrow").textContent = "\u00b7"; $("arrow").className = ""; return;
+    $("banner").textContent = "stopped"; $("banner").className = ""; showArrow(null); return;
   }
   if (!(await startCam())) return;
   running = true; $("toggle").textContent = "Stop"; $("toggle").className = "stop";
-  $("banner").textContent = "looking..."; $("banner").className = ""; $("arrow").textContent = "\u00b7"; $("arrow").className = "";
+  $("banner").textContent = "looking..."; $("banner").className = ""; showArrow(null);
   step();
 };
 </script>
