@@ -170,14 +170,15 @@ the browser asks once.
 
 `https://<box-ip>:8443/walk` (with `TEST_PAGE=1` and `TLS_PORT=8443`) is a
 phone page: it streams the back camera, sends a 512px frame per round trip
-as one choice question, and shows the label full width under the video
-with the probabilities below, no scrolling. Labels: all clear ahead,
-danger: stairs, danger: wall ahead, danger: object ahead, danger: pet
-ahead, door ahead. The instructions tell the model to judge only a 30
-degree window at the center of the frame and to say all clear when
-nothing is within 2 meters there. A changed label is spoken aloud when "speak"
-is on. Each frame is one image decision, about 320 ms on the Spark plus
-the upload. The "think" box adds a 64-token thought per frame, written
+as two choice questions, and shows the hazard label full width under the
+video, a direction arrow over it, and the probabilities below, no
+scrolling. Hazard labels: all clear ahead, danger: stairs, danger: wall
+ahead, danger: object ahead, danger: pet ahead, door ahead; the
+instructions tell the model to judge only a 30 degree window at the
+center of the frame and to say all clear when nothing is within 2 meters
+there. Direction: turn left, go ahead, turn right, chosen to avoid
+obstacles, shown as an arrow. Each frame is one image decision, about
+320 ms on the Spark plus the upload. The "think" box adds a 64-token thought per frame, written
 with the frame in view and seeded into the read's canvas ahead of the
 answer; the canvas bounds the thought, so at 128 rows a request for more
 is clipped and `diagnostics.thought.budget` says to what.

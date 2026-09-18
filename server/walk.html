@@ -16,6 +16,9 @@
   #banner.clear { background: var(--clear); }
   #banner.danger { background: var(--danger); }
   #banner.door { background: var(--door); }
+  #arrow { position: absolute; top: 10px; right: 12px; width: 84px; height: 84px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 60px; line-height: 84px; text-align: center; font-weight: 700; }
+  #arrow.turn { background: rgba(179,38,30,.85); }
+  #arrow.ahead { background: rgba(31,143,58,.85); }
   #panel { padding: 10px 14px 12px; display: grid; gap: 8px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   button { font: inherit; font-size: 18px; padding: 10px 18px; border: 0; border-radius: 10px; background: #2a6df4; color: #fff; }
@@ -32,12 +35,12 @@
 <body>
 <div id="stage">
   <video id="video" autoplay playsinline muted></video>
+  <div id="arrow" title="recommended direction">·</div>
   <div id="banner">tap start</div>
 </div>
 <div id="panel">
   <div class="row">
     <button id="toggle">Start</button>
-    <label class="small"><input id="speak" type="checkbox" checked> speak</label>
     <label class="small"><input id="think" type="checkbox"> think (64 tokens)</label>
     <span id="meta" class="muted"></span>
   </div>
@@ -66,11 +69,22 @@ const QUESTIONS = {
       "danger: pet ahead": "a dog, cat or other animal in the path",
       "door ahead": "a door directly ahead, open or closed"
     }
+  },
+  direction: {
+    type: "choice",
+    instructions: "Which way should the person move next to avoid obstacles? Go ahead if the path straight ahead is clear; "
+      + "turn toward the side with the most open space when it is not.",
+    criteria: {
+      "turn left": "the way ahead is blocked and the left is more open",
+      "go ahead": "the path straight ahead is clear",
+      "turn right": "the way ahead is blocked and the right is more open"
+    }
   }
 };
+const ARROWS = {"turn left": "\u2190", "go ahead": "\u2191", "turn right": "\u2192"};
 const STATE = {note: "one frame from a phone's back camera, pointed the way the person is walking; only the center 30 degrees matters"};
 
-let stream = null, running = false, lastLabel = "", inflight = false;
+let stream = null, running = false, inflight = false;
 try { $("key").value = localStorage.getItem("djev_api_key") || ""; } catch (e) {}
 $("key").onchange = () => { try { localStorage.setItem("djev_api_key", $("key").value); } catch (e) {} };
 
@@ -92,22 +106,21 @@ function frame() {
   c.getContext("2d").drawImage(v, 0, 0, w, h);
   return new Promise(res => c.toBlob(res, "image/jpeg", 0.7));
 }
-function say(text) {
-  if (!$("speak").checked || !("speechSynthesis" in window)) return;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(new SpeechSynthesisUtterance(text.replace("danger:", "danger,")));
-}
-function show(answer, ms, thought) {
-  const label = answer.choice, conf = answer.confidence;
+function show(answers, ms, thought) {
+  const answer = answers.ahead, label = answer.choice, conf = answer.confidence;
   const b = $("banner");
   b.textContent = label;
   b.className = label.startsWith("danger") ? "danger" : label.startsWith("door") ? "door" : "clear";
-  $("meta").textContent = Math.round(conf * 100) + "% · " + ms + " ms" + (thought ? " · thought " + thought.tokens + " tok" : "");
+  const dir = answers.direction;
+  const a = $("arrow");
+  a.textContent = ARROWS[dir.choice] || "?";
+  a.className = dir.choice === "go ahead" ? "ahead" : "turn";
+  a.title = dir.choice + " " + Math.round(dir.confidence * 100) + "%";
+  $("meta").textContent = Math.round(conf * 100) + "% · " + dir.choice + " " + Math.round(dir.confidence * 100) + "% · " + ms + " ms" + (thought ? " · thought " + thought.tokens + " tok" : "");
   const bars = $("bars"); bars.innerHTML = "";
-  for (const [name, p] of Object.entries(answer.probabilities).sort((a, b2) => b2[1] - a[1])) {
+  for (const [name, p] of Object.entries(answer.probabilities).sort((x, y) => y[1] - x[1])) {
     bars.insertAdjacentHTML("beforeend", `<span>${name}</span><span class="bar"><i style="width:${Math.round(p * 100)}%"></i></span><span class="muted">${Math.round(p * 100)}%</span>`);
   }
-  if (label !== lastLabel) { say(label); lastLabel = label; }
 }
 async function step() {
   if (!running || inflight) return;
@@ -128,7 +141,7 @@ async function step() {
     const resp = await fetch("/v1/systemone", {method: "POST", headers, body: fd});
     const d = await resp.json();
     if (!resp.ok) throw new Error((d.error && d.error.message) || resp.status);
-    show(d.answers.ahead, Math.round(performance.now() - t0), d.diagnostics && d.diagnostics.thought);
+    show(d.answers, Math.round(performance.now() - t0), d.diagnostics && d.diagnostics.thought);
     $("status").textContent = "";
   } catch (e) {
     $("status").textContent = "error: " + e.message;
@@ -139,11 +152,11 @@ async function step() {
 $("toggle").onclick = async () => {
   if (running) {
     running = false; $("toggle").textContent = "Start"; $("toggle").className = "";
-    $("banner").textContent = "stopped"; $("banner").className = ""; return;
+    $("banner").textContent = "stopped"; $("banner").className = ""; $("arrow").textContent = "\u00b7"; $("arrow").className = ""; return;
   }
   if (!(await startCam())) return;
-  running = true; lastLabel = ""; $("toggle").textContent = "Stop"; $("toggle").className = "stop";
-  $("banner").textContent = "looking..."; $("banner").className = "";
+  running = true; $("toggle").textContent = "Stop"; $("toggle").className = "stop";
+  $("banner").textContent = "looking..."; $("banner").className = ""; $("arrow").textContent = "\u00b7"; $("arrow").className = "";
   step();
 };
 </script>
