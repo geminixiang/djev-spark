@@ -1,6 +1,7 @@
-# dgemma-spark
+# djev-spark
 
-DiffusionGemma 26B-A4B (NVFP4) on a DGX Spark, serving structured decisions.
+DiffusionGemma as Jev, for the Spark: DiffusionGemma 26B-A4B (NVFP4) on a DGX
+Spark, serving structured decisions.
 One container: vLLM with the structured-reads patches on port 8010, the
 structured decision server on port 8011 in front of it.
 

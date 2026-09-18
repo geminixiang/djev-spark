@@ -9,7 +9,7 @@
 services:
   dgemma:
     build: .
-    image: dgemma-spark:latest
+    image: djev-spark:latest
     container_name: dgemma
     network_mode: host
     runtime: nvidia

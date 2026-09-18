@@ -13,7 +13,7 @@ import pathlib
 site = pathlib.Path(importlib.util.find_spec("vllm").origin).parent
 target = site / "model_executor" / "models" / "diffusion_gemma.py"
 DEF = "def _compiled_sample_step(\n"
-MARKER = "# [dgemma-spark] recompile limit"
+MARKER = "# [djev-spark] recompile limit"
 INSERT = f"""{MARKER}
 # Reads come in several canvas widths and each width is a fresh dynamo
 # specialization of the sampler. Past torch's default of 8 every later width

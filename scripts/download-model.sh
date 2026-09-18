@@ -15,7 +15,7 @@ if command -v hf >/dev/null 2>&1; then
 else
   docker compose build -q dgemma
   docker run --rm -v "$DEST:/models" -e HF_TOKEN="${HF_TOKEN:-}" \
-    --entrypoint hf dgemma-spark:latest download "$REPO" --local-dir "/models/$NAME"
+    --entrypoint hf djev-spark:latest download "$REPO" --local-dir "/models/$NAME"
 fi
 echo "model at $DEST/$NAME"
 ls "$DEST/$NAME" | head
