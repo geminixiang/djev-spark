@@ -52,7 +52,7 @@ refuses anything else.
 
 ```bash
 cp .env.example .env            # optional; defaults are in compose.yaml
-scripts/download-model.sh       # nvidia/diffusiongemma-26B-A4B-it-NVFP4 into ./models/dgemma
+scripts/download-model.sh       # nvidia/diffusiongemma-26B-A4B-it-NVFP4 into ./models/dgemma (MODELS_DIR and MODEL_NAME move it)
 docker compose up -d --build
 docker compose logs -f dgemma   # first start JIT-builds FlashInfer kernels, several minutes; later starts take about 30 s
 scripts/smoke.sh                # one generation through vLLM, one decision through the server

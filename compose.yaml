@@ -18,12 +18,13 @@ services:
     ulimits:
       core: 0
     volumes:
+      # The checkpoint is ${MODELS_DIR}/${MODEL_NAME}.
       - ${MODELS_DIR:-./models}:/models:ro
       # FlashInfer's JIT output and torch's compile cache. First start builds
       # for several minutes; every later start reuses this.
       - ${CACHE_DIR:-./cache}:/root/.cache
     environment:
-      - MODEL=/models/dgemma
+      - MODEL=/models/${MODEL_NAME:-dgemma}
       - SERVED_NAME=${SERVED_NAME:-dgemma}
       - CANVAS=${CANVAS:-128}
       - MAX_SEQS=${MAX_SEQS:-32}

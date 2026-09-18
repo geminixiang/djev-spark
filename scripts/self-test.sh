@@ -5,5 +5,5 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 docker compose build -q dgemma
 docker compose run --rm --no-deps --entrypoint python3 \
-  -e SERVER_DIR=/opt/dgemma -e TOKENIZER=/models/dgemma \
+  -e SERVER_DIR=/opt/dgemma \
   dgemma /opt/dgemma/test_structured_server.py

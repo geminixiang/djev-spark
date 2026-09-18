@@ -51,7 +51,7 @@ SCHEMA = {"questions": [
     "samples": 3}
 
 S.ARGS = type("A", (), {"upstream": "http://127.0.0.1:8998", "model": "dgemma"})()
-tok = __import__("transformers").AutoTokenizer.from_pretrained(os.environ.get("TOKENIZER", "/models/dgemma"))
+tok = __import__("transformers").AutoTokenizer.from_pretrained(os.environ.get("TOKENIZER", os.environ.get("MODEL", "/models/dgemma")))
 if tok.chat_template is None and os.environ.get("CHAT_TEMPLATE"):
     tok.chat_template = open(os.environ["CHAT_TEMPLATE"]).read()
 S.init_tokenizer(tok)
