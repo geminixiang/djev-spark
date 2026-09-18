@@ -70,28 +70,67 @@ curl -s localhost:8011/v1/systemone -H 'content-type: application/json' -d '{
   }}'
 ```
 
-Request: `state` (string, object or array), `questions` map of id to
-`{type, instructions, criteria}`. `noul` criteria is an optional
-`{"true": ..., "false": ...}`; `choice` criteria maps option names to
-descriptions or null; `score` criteria is an ordered list of levels.
-Response: `model`, `answers` (noul `{"noul": p}`; choice `{"choice",
-"probabilities", "confidence"}`; score `{"score", "legend",
-"probabilities", "confidence"}` with 0-indexed legend), `usage`
-(`input_tokens` by the tokenizer, `output_tokens` = canvas rows plus
-thought tokens), and this server's `diagnostics` (per-read tops, entropies,
-timing, thought). Validation errors are 422.
+### Request
 
-Extensions, as top-level request keys: `samples` (`"auto"` or N, default
-auto), `auto_max`, `auto_threshold`, `think` (thought budget in tokens),
-`chunk_rows`, `chunk_prompt`, `sequential`, `ask`, `steps`, `instructions`
-(context rendered ahead of the questions), `seed`.
+| field | what it is |
+|---|---|
+| `state` | What the questions are about. A string is used as written; an object or array is sent as JSON. |
+| `questions` | A map from your own question ids to question objects. Answers come back under the same ids, in the same order. |
+| `model` | Accepted for compatibility with Jev clients and ignored. |
+| `seed` | Optional. Seeds the noise draws, so the same request gives the same answer. Default 42. |
 
-Images: Jev's API has no images, so this server takes them in two possible forms.
-Either `multipart/form-data` with the JSON body in a part named `request`
-and each image as a file part (any name, in order), or an `images` array
-in the JSON body holding `data:image/...;base64,...` URLs or
-`{"content_type", "base64"}` objects. Images go ahead of the state in the
-prompt. `think` and `sequential` need a text-only state.
+Each question has a `type`, an `instructions` string (the question itself), and `criteria`, whose shape depends on the type:
+
+| type | what it asks | `criteria` |
+|---|---|---|
+| `noul` | A yes-or-no question. | Optional. `{"true": "what yes means", "false": "what no means"}`. The descriptions are shown to the model next to the labels. |
+| `choice` | Pick one option. | Required. An object mapping each option name to a description, or to `null` for no description. Option order is kept. |
+| `score` | Rate on an ordered scale. | Required. A list of level names from lowest to highest, at least two. |
+
+### Response
+
+| field | what it holds |
+|---|---|
+| `answers` | One answer per question id. The shape depends on the question type; see below. |
+| `usage` | `input_tokens`: the prompt as vLLM counted it, images included. `output_tokens`: the canvas rows read, plus any thought tokens. |
+| `diagnostics` | This server's extras, not part of Jev's contract: the number of reads, each read's top label and entropy per question, timing, the thought if one was written, and the prompt token count. |
+| `model` | The served model name. |
+
+| answer type | fields |
+|---|---|
+| `noul` | `noul`: the probability of yes, from 0 to 1. |
+| `choice` | `choice`: the option with the most probability. `probabilities`: every option's probability, by name. `confidence`: the winning probability. |
+| `score` | `score`: the probability-weighted level, where the lowest level is 0. `legend`: level index to level name. `probabilities`: probability per level index. `confidence`: the winning level's probability. |
+
+Validation problems return 422 with `{"error": {"message": ...}}`. A failed upstream call returns 502.
+
+### Extensions
+
+These go at the top level of the request body, beside `state` and `questions`. None of them are part of Jev's contract.
+
+| key | default | what it does |
+|---|---|---|
+| `samples` | `"auto"` | How many noise draws to average. A number fixes it. `"auto"` reads once and reads more only when the first read looks unsure. |
+| `auto_max` | 4 | The most reads `"auto"` will take. |
+| `auto_threshold` | 0.1 | The entropy above which `"auto"` reads again. |
+| `think` | 0 | Lets the model write up to this many tokens of thought before the read, and the read conditions on it. Costs one generation per decision. Text-only states. |
+| `instructions` | | Context shown to the model ahead of the questions. Put a long document here when many requests share it, so its prefill is cached. |
+| `chunk_rows` | canvas | Splits a long question list into chunks that fit this many rows each. The default is the served canvas. |
+| `chunk_prompt` | `"own"` | Whether each chunk's prompt lists only its own questions (`"own"`) or every question (`"shared"`). |
+| `sequential` | false | Runs the chunks in order and prefills each chunk's answers before the next, so later answers condition on earlier ones. Text-only states. |
+| `ask` | | A list of question ids to answer in one read, leaving the rest out. |
+| `steps` | 1 | Denoise steps per read. Leave at 1; more steps let the canvas drift from the template. |
+
+### Images
+
+Jev's API has no images. This server takes them in two forms, and either way they go ahead of the state in the prompt.
+
+| form | how |
+|---|---|
+| multipart | `multipart/form-data` with the JSON body in a part named `request` and each image as a file part. Any part name, any number of images, in order. This is what `curl -F` and a browser `FormData` send. |
+| JSON | An `images` array in the body, each entry a `data:image/...;base64,...` URL or an object `{"content_type": "image/png", "base64": "..."}`. |
+
+`think` and `sequential` need a text-only state, so they refuse images with a 422.
 
 ```bash
 curl -s localhost:8011/v1/systemone \
@@ -112,7 +151,7 @@ Webcam live image mode:
 
 Static image tests:
 
-![playground with image](docs/triangle.jpg)
+![playground with image](docs/triangle.png)
 
 ## Configuration
 
