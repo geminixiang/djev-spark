@@ -39,9 +39,9 @@ class Fake(BaseHTTPRequestHandler):
             content.append({"token": f"token_id:{tid}", "logprob": -0.01, "top_logprobs": top})
         if self.path.endswith("/v1/completions"):
             rows = [{tp["token"]: tp["logprob"] for tp in c["top_logprobs"]} for c in content]
-            body = json.dumps({"choices": [{"logprobs": {"top_logprobs": rows}}], "usage": {}}).encode()
+            body = json.dumps({"choices": [{"logprobs": {"top_logprobs": rows}}], "usage": {"prompt_tokens": 321}}).encode()
         else:
-            body = json.dumps({"choices": [{"logprobs": {"content": content}}], "usage": {}}).encode()
+            body = json.dumps({"choices": [{"logprobs": {"content": content}}], "usage": {"prompt_tokens": 321}}).encode()
         self.send_response(200); self.send_header("content-type", "application/json"); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
 
 SCHEMA = {"questions": [
@@ -191,7 +191,7 @@ u, b, t = d["answers"]["urgent"], d["answers"]["bucket"], d["answers"]["tone"]
 assert set(u) == {"type", "noul"} and abs(u["noul"] - 0.7) < 1e-6
 assert b["type"] == "choice" and b["choice"] == "billing" and list(b["probabilities"]) == ["billing", "outage", "feature"] and abs(b["confidence"] - 0.7) < 1e-6
 assert t["type"] == "score" and t["legend"] == {"0": "calm", "1": "annoyed", "2": "furious"} and list(t["probabilities"]) == ["0", "1", "2"] and abs(t["score"] - 0.45) < 1e-6
-assert d["usage"]["input_tokens"] > 0 and d["usage"]["output_tokens"] == len(TEMPLATE) + 1
+assert d["usage"] == {"input_tokens": 321, "output_tokens": len(TEMPLATE) + 1}, d["usage"]
 assert d["diagnostics"]["samples"]["n"] == 2 and len(SEEN) == 2
 sysprompt = SEEN[0]["messages"][0]["content"]
 assert "yes: needs a reply now" in sysprompt and "no: can wait" in sysprompt and "outage (service down)" in sysprompt, sysprompt
@@ -208,6 +208,44 @@ for body, want in [
     code, d = post_s1(body)
     assert code == 422 and want in d["error"]["message"], (code, d)
 print("systemone ok")
+
+# images: multipart file parts beside the request JSON, or data URLs in "images"
+import base64
+PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+PNG_URL = "data:image/png;base64," + base64.b64encode(PNG).decode()
+BOUNDARY = "xxDJEVxx"
+
+def multipart(parts):
+    out = b""
+    for name, filename, ctype, data in parts:
+        head = f'--{BOUNDARY}\r\nContent-Disposition: form-data; name="{name}"' + (f'; filename="{filename}"' if filename else "") + f"\r\nContent-Type: {ctype}\r\n\r\n"
+        out += head.encode() + data + b"\r\n"
+    return out + f"--{BOUNDARY}--\r\n".encode()
+
+def post_mp(parts):
+    req = urllib.request.Request("http://127.0.0.1:8999/v1/systemone", data=multipart(parts), headers={"content-type": f"multipart/form-data; boundary={BOUNDARY}"})
+    try:
+        r = urllib.request.urlopen(req); return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, json.load(e)
+
+one = dict(jev, samples=1)
+SEEN.clear()
+code, d = post_mp([("request", None, "application/json", json.dumps(one).encode()), ("photo", "a.png", "image/png", PNG), ("photo2", "b.png", "image/png", PNG)])
+assert code == 200, d
+content = SEEN[-1]["messages"][1]["content"]
+assert content == [{"type": "image_url", "image_url": {"url": PNG_URL}}] * 2 + [{"type": "text", "text": json.dumps(one["state"])}], content
+assert d["usage"]["input_tokens"] == 321 and d["answers"]["urgent"]["noul"] > 0.5
+SEEN.clear()
+code, d = post_s1(dict(one, images=[PNG_URL, {"content_type": "image/png", "base64": base64.b64encode(PNG).decode()}]))
+assert code == 200 and SEEN[-1]["messages"][1]["content"][:2] == [{"type": "image_url", "image_url": {"url": PNG_URL}}] * 2, d
+code, d = post_s1(dict(one, images=["not an image"]))
+assert code == 422 and "images[0]" in d["error"]["message"], d
+code, d = post_s1(dict(one, images=[PNG_URL], think=8))
+assert code == 422 and "text state" in d["error"]["message"], d
+code, d = post_mp([("request", None, "application/json", b"{}"), ("notes", "n.txt", "text/plain", b"hi")])
+assert code == 400 and "neither" in d["error"]["message"], d
+print("images ok")
 
 # bad requests
 for body, want in [

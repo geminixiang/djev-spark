@@ -90,6 +90,20 @@ auto), `auto_max`, `auto_threshold`, `think` (thought budget in tokens),
 `chunk_rows`, `chunk_prompt`, `sequential`, `ask`, `steps`, `instructions`
 (context rendered ahead of the questions), `seed`.
 
+Images: Jev's contract has no images, so this server takes them two ways.
+Either `multipart/form-data` with the JSON body in a part named `request`
+and each image as a file part (any name, in order), or an `images` array
+in the JSON body holding `data:image/...;base64,...` URLs or
+`{"content_type", "base64"}` objects. Images go ahead of the state in the
+prompt. `think` and `sequential` need a text-only state.
+
+```bash
+curl -s localhost:8011/v1/systemone \
+  -F 'request={"model": "jev-latest", "state": {"note": "the photo is from the returns desk"},
+               "questions": {"damaged": {"type": "noul", "instructions": "Is the item damaged?"}}}' \
+  -F 'photo=@returns/1234.jpg'
+```
+
 `POST /v1/chat/completions` is the same decision as an OpenAI-shaped call:
 system message = the schema JSON, user message = the state JSON or image
 parts; reply `content` = the answer JSON. Schema documented at the top of

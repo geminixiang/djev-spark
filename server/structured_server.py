@@ -10,7 +10,10 @@ and answers in Jev's shape: noul {"noul": p}, choice {"choice",
 "probabilities", "confidence"}, score {"score", "legend", "probabilities",
 "confidence"}, with this server's diagnostics alongside. The schema keys
 below may be added to the request body as extensions ("samples", "think",
-"chunk_rows", "sequential", "ask", "steps", "instructions").
+"chunk_rows", "sequential", "ask", "steps", "instructions"). Images go
+ahead of the state: as multipart/form-data with the JSON body in a part
+named "request" and each image as a file part, or as an "images" array of
+data URLs in the JSON body.
 
 POST /v1/chat/completions is the same decision as an OpenAI-shaped call: a
 system message that is the schema JSON below and a user message that is
@@ -48,7 +51,7 @@ then run this in front of it:
   python structured_server.py --upstream http://127.0.0.1:8000 \
       --tokenizer google/diffusiongemma-26B-A4B-it --canvas 64 --port 8011
 """
-import argparse, json, math, random, threading, time, urllib.error, urllib.request
+import argparse, base64, json, math, random, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -368,10 +371,11 @@ def one_read_continuation(schema, template, slots, prompt_ids, seed):
 def read_many(schema, template, slots, sys_text, state_content, seed, n, prefix=None):
     results = [None] * n
     errors = [None] * n
+    usages = [None] * n
 
     def run(k):
         try:
-            results[k], _ = one_read(schema, template, slots, sys_text, state_content, seed + k * 7919, prefix)
+            results[k], usages[k] = one_read(schema, template, slots, sys_text, state_content, seed + k * 7919, prefix)
         except Exception as e:  # surfaced as one failed request below
             errors[k] = e
 
@@ -383,7 +387,7 @@ def read_many(schema, template, slots, sys_text, state_content, seed, n, prefix=
     for e in errors:
         if e is not None:
             raise e
-    return results
+    return results, usages
 
 
 def question_groups(schema):
@@ -475,6 +479,7 @@ def decide(schema, state_content, seed):
                         "policy": [b["diagnostics"]["samples"]["policy"] for b, _ in parts]},
             "timing": {"total_ms": (time.time() - started) * 1e3,
                        "reads": sum(b["diagnostics"]["timing"]["reads"] for b, _ in parts)},
+            "prompt_tokens": max((b["diagnostics"].get("prompt_tokens") or 0) for b, _ in parts) or None,
             "questions": diag_q,
             "engine": "vllm",
         },
@@ -491,15 +496,18 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
     template, slots = template_for(schema, SCAFFOLD if prefix is None else [], lead)
     policy = schema["policy"]
     if policy["mode"] == "fixed":
-        reads = read_many(schema, template, slots, sys_text, state_content, seed, policy["n"], prefix)
+        reads, usages = read_many(schema, template, slots, sys_text, state_content, seed, policy["n"], prefix)
         extended = None
         first_entropy = None
     else:
-        reads = read_many(schema, template, slots, sys_text, state_content, seed, 1, prefix)
+        reads, usages = read_many(schema, template, slots, sys_text, state_content, seed, 1, prefix)
         first_entropy = {q["id"]: r["entropy"] for q, r in zip(schema["questions"], reads[0])}
         extended = max(first_entropy.values()) > policy["threshold"] and policy["max"] > 1
         if extended:
-            reads += read_many(schema, template, slots, sys_text, state_content, seed + 1, policy["max"] - 1, prefix)
+            more, more_usages = read_many(schema, template, slots, sys_text, state_content, seed + 1, policy["max"] - 1, prefix)
+            reads += more
+            usages += more_usages
+    prompt_tokens = next((u["prompt_tokens"] for u in usages if u and u.get("prompt_tokens")), None)
     elapsed_ms = (time.time() - started) * 1e3
 
     answers = {}
@@ -534,6 +542,7 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
             "samples": {"n": n, "tops": tops, "policy": dict(policy, extended=extended, first_read_entropy=first_entropy)},
             "timing": {"total_ms": elapsed_ms, "reads": n},
             "thought": thought,
+            "prompt_tokens": prompt_tokens,
             "questions": diag_q,
             "engine": "vllm",
         },
@@ -578,12 +587,34 @@ def jev_schema(body):
     return parse_schema(schema)
 
 
-def jev_state(body):
-    """The state as the user message: text as given, anything else as JSON."""
+def image_part(content_type, data):
+    return {"type": "image_url", "image_url": {"url": f"data:{content_type};base64," + base64.b64encode(data).decode()}}
+
+
+def jev_images(value):
+    """Image parts from the body's "images": data URLs, or objects with
+    content_type and base64."""
+    parts = []
+    for i, im in enumerate(value or []):
+        if isinstance(im, str) and im.startswith("data:image/"):
+            parts.append({"type": "image_url", "image_url": {"url": im}})
+        elif isinstance(im, dict) and str(im.get("content_type", "")).startswith("image/") and isinstance(im.get("base64"), str):
+            parts.append({"type": "image_url", "image_url": {"url": f"data:{im['content_type']};base64,{im['base64']}"}})
+        else:
+            raise SchemaError(f"images[{i}]: a data:image/... URL or an object with content_type and base64")
+    return parts
+
+
+def jev_state(body, image_parts=()):
+    """The user message: the state as text (as given, or as JSON), with any
+    images ahead of it."""
     state = body.get("state")
     if state is None:
         raise SchemaError("state: required")
-    return state if isinstance(state, str) else json.dumps(state)
+    text = state if isinstance(state, str) else json.dumps(state)
+    if not image_parts:
+        return text
+    return list(image_parts) + [{"type": "text", "text": text}]
 
 
 def jev_answer(q, a):
@@ -625,13 +656,37 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"status": "ok"})
         return self._json(404, {"error": {"message": "unknown route"}})
 
+    def _read_request(self):
+        """-> (body, image parts): a JSON body, or multipart/form-data with the
+        JSON in a part named request and each image as a file part, in order."""
+        raw = self.rfile.read(int(self.headers.get("content-length", "0")))
+        ctype = self.headers.get("content-type", "")
+        if not ctype.lower().startswith("multipart/form-data"):
+            return json.loads(raw), []
+        from email.parser import BytesParser
+        from email.policy import HTTP
+        msg = BytesParser(policy=HTTP).parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + raw)
+        body, images = None, []
+        for part in msg.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            data = part.get_payload(decode=True)
+            if name == "request":
+                body = json.loads(data)
+            elif part.get_content_type().startswith("image/"):
+                images.append(image_part(part.get_content_type(), data))
+            else:
+                raise ValueError(f"part {name!r}: neither the request JSON nor an image")
+        if body is None:
+            raise ValueError("multipart needs a part named request holding the JSON body")
+        return body, images
+
     def do_POST(self):
         try:
-            req = json.loads(self.rfile.read(int(self.headers.get("content-length", "0"))))
+            req, images = self._read_request()
         except Exception as e:
-            return self._json(400, {"error": {"message": f"invalid JSON body: {e}", "type": "invalid_request_error"}})
+            return self._json(400, {"error": {"message": f"invalid body: {e}", "type": "invalid_request_error"}})
         if self.path == "/v1/systemone":
-            return self._systemone(req)
+            return self._systemone(req, images)
         if self.path == "/v1/chat/completions":
             return self._chat(req)
         return self._json(404, {"error": {"message": "unknown route"}})
@@ -647,10 +702,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return 500, {"error": {"message": repr(e), "type": "server_error"}}
 
-    def _systemone(self, req):
+    def _systemone(self, req, images):
         try:
             schema = jev_schema(req)
-            state = jev_state(req)
+            state = jev_state(req, images + jev_images(req.get("images")))
         except SchemaError as e:
             return self._json(422, {"error": {"message": str(e), "type": "validation_error"}})
         code, result = self._decide(schema, state, int(req.get("seed", 42)))
@@ -663,7 +718,11 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {
             "model": ARGS.model,
             "answers": answers,
-            "usage": {"input_tokens": len(chat_prompt_ids(system_text(schema), state)), "output_tokens": completion_tokens},
+            # vLLM's prompt count when the reads reported one (it covers images);
+            # the tokenizer's count of the text prompt otherwise.
+            "usage": {"input_tokens": body["diagnostics"].get("prompt_tokens")
+                      or (len(chat_prompt_ids(system_text(schema), state)) if isinstance(state, str) else 0),
+                      "output_tokens": completion_tokens},
             "diagnostics": body["diagnostics"],
         })
 
