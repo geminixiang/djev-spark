@@ -46,6 +46,13 @@ Schema (system message):
    "samples": "auto" | N, "auto_threshold": 0.1, "auto_max": 4,
    "steps": 1, "think": 0}
 
+A question may declare "depends_on": [ids] to be answered after those,
+with their answers in its prompt; "ask_if": {id: [answers]} to be asked
+only when that question's answer is among them (skipped answers are
+null); and "alone": true for a read of its own. Questions run in stages
+by these dependencies, each stage one joint read, later stages continuing
+the earlier answers (prefilled for a text state, restated for an image).
+
 Up to ten questions answer as "id: label" lines. Past that the id runs
 straight into the label, space separated, at one row fewer a question. A
 schema whose answer template does not fit the canvas is split into chunks
@@ -130,7 +137,24 @@ def parse_schema(value):
             raise SchemaError(f"question {qid!r}: needs at least two alternatives")
         if len(choices) > 26:
             raise SchemaError(f"question {qid!r}: at most 26 alternatives")
-        qs.append({"id": qid, "type": kind, "instructions": str(q.get("instructions", "")), "choices": choices, "labels": labels})
+        deps = q.get("depends_on") or []
+        ask_if = q.get("ask_if") or {}
+        if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+            raise SchemaError(f"question {qid!r}: depends_on must be a list of question ids")
+        if not isinstance(ask_if, dict) or not all(isinstance(v, list) and v for v in ask_if.values()):
+            raise SchemaError(f"question {qid!r}: ask_if must map a question id to a non-empty list of its answers")
+        qs.append({"id": qid, "type": kind, "instructions": str(q.get("instructions", "")), "choices": choices, "labels": labels,
+                   "depends_on": list(dict.fromkeys(list(deps) + list(ask_if))), "ask_if": ask_if, "alone": bool(q.get("alone", False))})
+    by_id = {q["id"]: q for q in qs}
+    for q in qs:
+        for dep in q["depends_on"]:
+            if dep not in by_id or dep == q["id"]:
+                raise SchemaError(f"question {q['id']!r}: depends on unknown question {dep!r}")
+        for dep, vals in q["ask_if"].items():
+            names = [c[0] for c in by_id[dep]["choices"]]
+            if any(v not in names for v in vals):
+                raise SchemaError(f"question {q['id']!r}: ask_if values for {dep!r} must be among {names}")
+    schedule(qs)  # refuses a cycle
     samples = value.get("samples", "auto")
     if samples == "auto":
         policy = {"mode": "auto", "max": int(value.get("auto_max", 4)), "threshold": float(value.get("auto_threshold", 0.1))}
@@ -142,6 +166,9 @@ def parse_schema(value):
     if ask is not None:
         if not isinstance(ask, list) or not ask or any(a not in seen for a in ask):
             raise SchemaError("schema: ask must list question ids from this schema")
+        for q in qs:
+            if q["id"] in ask and any(d not in ask for d in q["depends_on"]):
+                raise SchemaError(f"schema: ask names {q['id']!r} but not everything it depends on")
     chunk_rows = value.get("chunk_rows")
     if chunk_rows is not None and (not isinstance(chunk_rows, int) or chunk_rows < 8):
         raise SchemaError("schema: chunk_rows must be an integer of at least 8")
@@ -436,17 +463,36 @@ def read_many(schema, template, slots, sys_text, state_content, seed, n, prefix=
     return results, usages
 
 
-def question_groups(schema):
-    """The questions of one read each. ``ask`` picks a subset; otherwise the
-    questions are split, in order, into the fewest groups whose answer
-    templates fit ``chunk_rows`` (the canvas by default)."""
-    qs = schema["questions"]
-    if schema.get("ask"):
-        wanted = set(schema["ask"])
-        return [[q for q in qs if q["id"] in wanted]]
+def schedule(qs):
+    """Questions in stages: a question's stage comes after the stages of
+    everything it depends on. Declaration order is kept within a stage."""
+    ids = {q["id"] for q in qs}
+    pending = list(qs)
+    done: set = set()
+    levels = []
+    while pending:
+        level = [q for q in pending if all(d in done or d not in ids for d in q["depends_on"])]
+        if not level:
+            raise SchemaError("schema: dependency cycle among " + ", ".join(q["id"] for q in pending))
+        levels.append(level)
+        done |= {q["id"] for q in level}
+        pending = [q for q in pending if q["id"] not in done]
+    return levels
+
+
+def chunk_groups(schema, qs):
+    """``qs`` split, in order, into the fewest groups whose answer templates
+    fit ``chunk_rows`` (the canvas by default); a question marked alone gets
+    its own group."""
     limit = schema.get("chunk_rows") or CANVAS_LEN
     groups, group = [], []
     for q in qs:
+        if q["alone"]:
+            if group:
+                groups.append(group)
+                group = []
+            groups.append([q])
+            continue
         trial = group + [q]
         rows = len(SCAFFOLD) + len(enc(answer_text(trial, [0] * len(trial), schema.get("format", "lines")))) + 1
         if rows > limit and group:
@@ -454,82 +500,135 @@ def question_groups(schema):
             group = [q]
         else:
             group = trial
-    groups.append(group)
+    if group:
+        groups.append(group)
     return groups
 
 
+def answer_name(q, a):
+    """The answer as the name ask_if compares against: yes or no, an option
+    name, or a level name."""
+    if a is None:
+        return None
+    return a["label"] if q["type"] == "noul" else a.get("choice", a.get("level"))
+
+
 def decide(schema, state_content, seed):
-    """One decision, as one read set or several chunked ones run together."""
-    groups = question_groups(schema)
-    chunked = len(groups) > 1
+    """One decision. Questions run in stages by their dependencies; a stage
+    is one joint read (chunked by the canvas, a question marked alone in its
+    own read) and later stages condition on every earlier answer: as a
+    prefilled continuation for a text state, restated in the state for an
+    image one. ask_if skips a question whose condition failed; its answer is
+    null."""
     started = time.time()
-    if not chunked:
-        body, rows = decide_group(dict(schema, questions=groups[0]), system_text(schema), state_content, seed)
-        return body, rows
-    # Each chunk lists its own questions by default: a chunk answering a
-    # subset of a longer list loses alignment and confidence (measured on
-    # per-word PII: 3 of 42 decisions flipped, none with own lists).
-    shared = schema["chunk_prompt"] == "shared"
-    sys_shared = system_text(schema, chunked=True)
-    thought = None
-
-    def one(k_group):
-        k, group = k_group
-        sub = dict(schema, questions=group)
-        sys_text = sys_shared if shared else system_text(sub)
-        return decide_group(sub, sys_text, state_content, seed + 104729 * k)
-
-    if schema["sequential"]:
-        # Chunks continue one answer in order under the full question list.
-        # Each chunk's argmax lines are prefilled before the next, so later
-        # answers condition on earlier ones (conditionals, not marginals).
-        sys_text = system_text(schema)
-        if not isinstance(state_content, str):
-            raise SchemaError("sequential chunks need a text state (images go through the chat endpoint)")
+    qs = [q for q in schema["questions"] if not schema.get("ask") or q["id"] in schema["ask"]]
+    levels = schedule(qs)
+    text_state = isinstance(state_content, str)
+    fmt = schema["format"]
+    join = FORMATS[fmt][0]
+    # More than one read in sequence needs the full question list in every
+    # prompt, so that later reads continue one answer.
+    chained = len(levels) > 1 or schema["sequential"]
+    sys_full = system_text(schema, chunked=not text_state and chained)
+    base_ids, thought = None, None
+    if chained and text_state:
         if schema["think"]:
-            base_ids, thought = think(sys_text, state_content, schema["think"])
+            base_ids, thought = think(sys_full, state_content, schema["think"])
         else:
-            base_ids = chat_prompt_ids(sys_text, state_content) + SCAFFOLD
-        join = FORMATS[schema["format"]][0]
-        lines = []
-        parts = []
-        for k, group in enumerate(groups):
-            sub = dict(schema, questions=group)
-            if lines:
-                prefix, lead = base_ids + enc(join.join(lines)), join
+            base_ids = chat_prompt_ids(sys_full, state_content) + SCAFFOLD
+    shared = schema["chunk_prompt"] == "shared"
+    answered, lines, earlier = {}, [], []
+    parts, stages, chunks, skipped = [], [], [], {}
+    by_id = {q["id"]: q for q in schema["questions"]}
+
+    def run(group, k, conditioned):
+        sub = dict(schema, questions=group)
+        # A thought is written once: it rides in the prefix of a chained text
+        # decision, or in the first read of anything else.
+        sub["think"] = 0 if (chained and text_state) or conditioned else schema["think"]
+        if text_state:
+            if conditioned:
+                prefix, lead, sys_text = base_ids + enc(join.join(lines)), join, sys_full
+            elif chained:
+                prefix, lead, sys_text = (base_ids if thought else None), "", sys_full
             else:
-                prefix, lead = (base_ids if thought else None), ""
-            body, rows = decide_group(sub, sys_text, state_content, seed + 104729 * k, prefix, lead)
-            parts.append((body, rows))
-            chosen = [q["labels"].index(body["answers"][q["id"]]["label"]) for q in group]
-            lines.append(answer_text(group, chosen, schema["format"]))
-    else:
-        with ThreadPoolExecutor(max_workers=len(groups)) as ex:
-            parts = list(ex.map(one, enumerate(groups)))
-        if schema["think"]:
-            thought = [b["diagnostics"]["thought"] for b, _ in parts]
-    answers, diag_q = {}, {}
+                prefix, lead, sys_text = None, "", (system_text(schema, chunked=True) if shared else system_text(sub))
+            return decide_group(sub, sys_text, state_content, seed + 104729 * k, prefix, lead)
+        state = state_content
+        if conditioned:
+            text = next((p["text"] for p in state_content if p.get("type") == "text"), "")
+            text += "\n\nAnswers so far:\n" + "\n".join(earlier)
+            state = [p for p in state_content if p.get("type") != "text"] + [{"type": "text", "text": text}]
+            sys_text = sys_full
+        else:
+            sys_text = sys_full if (chained or shared) else system_text(sub)
+        return decide_group(sub, sys_text, state, seed + 104729 * k)
+
+    def absorb(group, body, rows):
+        parts.append((body, rows))
+        chunks.append([q["id"] for q in group])
+        answered.update(body["answers"])
+        lines.append(answer_text(group, [q["labels"].index(body["answers"][q["id"]]["label"]) for q in group], fmt))
+        earlier.extend(f"{q['id']}: {answer_name(q, body['answers'][q['id']])}" for q in group)
+
+    k = 0
+    for level in levels:
+        asked = []
+        for q in level:
+            failed = next(((dep, vals) for dep, vals in q["ask_if"].items() if answer_name(by_id[dep], answered.get(dep)) not in vals), None)
+            if failed:
+                answered[q["id"]] = None
+                skipped[q["id"]] = {"because": failed[0], "was": answer_name(by_id[failed[0]], answered.get(failed[0])), "wanted": failed[1]}
+                continue
+            asked.append(q)
+        if not asked:
+            continue
+        stages.append([q["id"] for q in asked])
+        groups = chunk_groups(schema, asked)
+        conditioned = bool(lines)
+        if schema["sequential"] or len(groups) == 1:
+            for group in groups:
+                body, rows = run(group, k, conditioned or (schema["sequential"] and bool(lines)))
+                absorb(group, body, rows)
+                k += 1
+        else:
+            with ThreadPoolExecutor(max_workers=len(groups)) as ex:
+                results = list(ex.map(lambda gk: run(gk[1], gk[0], conditioned), [(k + i, g) for i, g in enumerate(groups)]))
+            for group, (body, rows) in zip(groups, results):
+                absorb(group, body, rows)
+            k += len(groups)
+
+    answers = {q["id"]: answered.get(q["id"]) for q in qs}
+    diag_q = {}
     for body, _ in parts:
-        answers.update(body["answers"])
         diag_q.update(body["diagnostics"]["questions"])
-    return {
-        "answers": answers,
-        "diagnostics": {
-            "steps": schema["steps"],
-            "chunks": [[q["id"] for q in g] for g in groups],
-            "chunk_prompt": "full" if schema["sequential"] else schema["chunk_prompt"],
-            "sequential": schema["sequential"],
-            "thought": thought,
-            "samples": {"n": [b["diagnostics"]["samples"]["n"] for b, _ in parts],
-                        "tops": [b["diagnostics"]["samples"]["tops"] for b, _ in parts],
-                        "policy": [b["diagnostics"]["samples"]["policy"] for b, _ in parts]},
-            "timing": {"total_ms": (time.time() - started) * 1e3,
-                       "reads": sum(b["diagnostics"]["timing"]["reads"] for b, _ in parts)},
-            "prompt_tokens": max((b["diagnostics"].get("prompt_tokens") or 0) for b, _ in parts) or None,
-            "questions": diag_q,
-            "engine": "vllm",
-        },
-    }, sum(rows for _, rows in parts) + (thought["tokens"] if isinstance(thought, dict) else 0)
+    # A thought written here (chained text decision) is not in any group's
+    # row count; one written inside a group already is.
+    extra_rows = thought["tokens"] if thought else 0
+    if thought is None:
+        thoughts = [b["diagnostics"].get("thought") for b, _ in parts]
+        thought = thoughts[0] if len(parts) == 1 else ([t for t in thoughts if t] or None)
+    one = len(parts) == 1 and not skipped
+    diagnostics = {
+        "steps": schema["steps"],
+        "stages": stages,
+        "skipped": skipped,
+        "chunks": chunks,
+        "chunk_prompt": "full" if chained else schema["chunk_prompt"],
+        "sequential": schema["sequential"],
+        "conditioning": (None if len(stages) <= 1 and not schema["sequential"] else ("prefill" if text_state else "restated")),
+        "thought": thought,
+        "samples": (parts[0][0]["diagnostics"]["samples"] if one else
+                    {"n": [b["diagnostics"]["samples"]["n"] for b, _ in parts],
+                     "tops": [b["diagnostics"]["samples"]["tops"] for b, _ in parts],
+                     "policy": [b["diagnostics"]["samples"]["policy"] for b, _ in parts]}),
+        "timing": {"total_ms": (time.time() - started) * 1e3,
+                   "reads": sum(b["diagnostics"]["timing"]["reads"] for b, _ in parts)},
+        "prompt_tokens": max((b["diagnostics"].get("prompt_tokens") or 0) for b, _ in parts) or None,
+        "questions": diag_q,
+        "engine": "vllm",
+    }
+    return {"answers": answers, "diagnostics": diagnostics}, sum(rows for _, rows in parts) + extra_rows
 
 
 def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
@@ -641,6 +740,9 @@ def jev_schema(body):
             item["levels"] = crit
         else:
             raise SchemaError(f"question {qid!r}: unknown type {kind!r}")
+        for key in ("depends_on", "ask_if", "alone"):
+            if key in q:
+                item[key] = q[key]
         out.append(item)
     schema = {k: body[k] for k in JEV_EXTENSIONS if k in body}
     schema["questions"] = out
@@ -678,6 +780,8 @@ def jev_state(body, image_parts=()):
 
 
 def jev_answer(q, a):
+    if a is None:
+        return None
     if q["type"] == "noul":
         return {"type": "noul", "noul": a["noul"]}
     if q["type"] == "choice":
@@ -801,8 +905,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(code, result)
         body, completion_tokens = result
         answers = {q["id"]: jev_answer(q, body["answers"][q["id"]]) for q in schema["questions"]}
-        labels = " ".join(f"{k}={v['label']}" for k, v in body["answers"].items())
-        print(f"systemone: {labels} reads={body['diagnostics']['samples']['n']} {body['diagnostics']['timing']['total_ms']:.0f}ms", flush=True)
+        labels = " ".join(f"{k}={v['label'] if v else 'skipped'}" for k, v in body["answers"].items())
+        print(f"systemone: {labels} reads={body['diagnostics']['timing']['reads']} {body['diagnostics']['timing']['total_ms']:.0f}ms", flush=True)
         self._json(200, {
             "model": ARGS.model,
             "answers": answers,
@@ -842,8 +946,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(code, result)
         body, completion_tokens = result
         content = json.dumps(body, indent=2)
-        labels = " ".join(f"{k}={v['label']}" for k, v in body["answers"].items())
-        print(f"structured: {labels} reads={body['diagnostics']['samples']['n']} {body['diagnostics']['timing']['total_ms']:.0f}ms", flush=True)
+        labels = " ".join(f"{k}={v['label'] if v else 'skipped'}" for k, v in body["answers"].items())
+        print(f"structured: {labels} reads={body['diagnostics']['timing']['reads']} {body['diagnostics']['timing']['total_ms']:.0f}ms", flush=True)
         self._json(200, {
             "id": f"chatcmpl-{int(time.time() * 1000)}",
             "object": "chat.completion",

@@ -125,6 +125,39 @@ These go at the top level of the request body, beside `state` and `questions`.
 | `ask` | | List of question ids to answer in one read; the rest are skipped. |
 | `steps` | 1 | Denoise steps per read. More than 1 lets the canvas drift from the template. |
 
+### Dependencies
+
+By default every question in a request is read in one canvas: the answers
+share the prompt and the canvas but do not see each other. Three
+per-question keys change that.
+
+| key | what it does |
+|---|---|
+| `depends_on` | List of question ids. This question is read in a later stage than those, with their answers in its prompt. |
+| `ask_if` | Map of question id to a list of that question's answers (option names, level names, or `yes`/`no`). The question is asked only when the answer is in the list; otherwise its answer is `null`. Implies `depends_on`. |
+| `alone` | `true` reads the question in a canvas of its own, beside the others in its stage. For questions that pull each other, like a direction question next to a hazard question. |
+
+Questions run in stages by their dependencies, in declaration order within
+a stage. A stage is one joint read, chunked by the canvas, with `alone`
+questions in their own reads, all concurrent. Later stages continue the
+earlier answers: for a text state as a prefilled continuation of the same
+prompt, about one read's cost per stage; for an image state as a fresh
+read with the earlier answers restated in the state text, one image
+decision per stage. Cycles, unknown ids, `ask_if` values that are not
+answers of the named question, and an `ask` list missing a dependency
+are 422s. `diagnostics.stages` lists the ids read in each stage,
+`diagnostics.skipped` the gated ones with the answer that gated them, and
+`diagnostics.conditioning` is `prefill`, `restated` or null.
+
+```json
+"questions": {
+  "ahead": {"type": "choice", "instructions": "...", "criteria": {"all clear ahead": null, "danger: wall ahead": null}},
+  "side": {"type": "choice", "instructions": "Which half of the frame is the obstacle in?",
+           "criteria": {"left half": null, "right half": null},
+           "ask_if": {"ahead": ["danger: wall ahead"]}}
+}
+```
+
 ### Images
 
 Jev's API has no images. This server takes them in two forms. Images go ahead of the state in the prompt.

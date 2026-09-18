@@ -266,8 +266,9 @@ th = d["diagnostics"]["thought"]
 assert th["tokens"] == len(THOUGHT) and th["closed"] and th["budget"] <= 64 and d["answers"]["urgent"]["noul"] > 0.5, th
 code, d = post_s1(dict(one, images=[PNG_URL], think=4096))
 assert code == 200 and d["diagnostics"]["thought"]["budget"] < 4096, "the canvas bounds the thought"
-code, d = post_s1(dict(one, images=[PNG_URL], think=8, sequential=True, chunk_rows=8))
-assert code == 422, d
+code, d = post_s1(dict(one, images=[PNG_URL], sequential=True, chunk_rows=8))
+assert code == 200 and d["diagnostics"]["conditioning"] == "restated" and len(SEEN) >= 4, d["diagnostics"]["chunks"]
+assert "Answers so far:" in SEEN[-1]["messages"][1]["content"][-1]["text"], "sequential chunks with images restate the earlier answers"
 code, d = post_mp([("request", None, "application/json", b"{}"), ("notes", "n.txt", "text/plain", b"hi")])
 assert code == 400 and "neither" in d["error"]["message"], d
 print("images ok")
@@ -318,6 +319,60 @@ ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode 
 r = urllib.request.urlopen("https://127.0.0.1:8997/health", context=ctx)
 assert r.status == 200 and json.load(r) == {"status": "ok"}
 print("tls ok")
+
+# dependencies: stages, gating, alone reads, and the conditioning of later stages
+DEPS = {"model": "jev-latest", "state": {"ticket": "Everything is down and I am furious"}, "samples": 1,
+        "questions": {
+            "urgent": {"type": "noul", "instructions": "Does the customer need a reply within the hour?"},
+            "bucket": {"type": "choice", "instructions": "Which team owns this?", "criteria": {"billing": None, "outage": None, "feature": None}},
+            "escalate": {"type": "noul", "instructions": "Escalate to the on-call lead?", "depends_on": ["urgent", "bucket"]},
+            "refund": {"type": "noul", "instructions": "Offer a refund?", "ask_if": {"bucket": ["billing"]}},
+            "outage_note": {"type": "noul", "instructions": "Post a status page note?", "ask_if": {"bucket": ["outage"]}, "depends_on": ["urgent"]}}}
+SEEN.clear()
+code, d = post_s1(DEPS)
+assert code == 200, d
+dg = d["diagnostics"]
+assert dg["stages"] == [["urgent", "bucket"], ["escalate", "refund"]], dg["stages"]
+assert d["answers"]["outage_note"] is None and dg["skipped"]["outage_note"]["because"] == "bucket" and dg["skipped"]["outage_note"]["was"] == "billing"
+assert d["answers"]["refund"]["type"] == "noul" and d["answers"]["escalate"]["type"] == "noul"
+assert list(d["answers"]) == ["urgent", "bucket", "escalate", "refund", "outage_note"], "every id, in schema order"
+assert len(SEEN) == 2 and dg["conditioning"] == "prefill"
+first, second = SEEN
+assert first["_path"].endswith("/v1/chat/completions") and "Question refund" in first["messages"][0]["content"], "stage prompts list every question"
+assert second["_path"].endswith("/v1/completions")
+tail = S.TOK.decode(second["prompt"][-30:])
+assert "urgent: yes" in tail and "bucket: A" in tail, tail
+print("dependencies ok:", dg["stages"], "skipped", list(dg["skipped"]))
+
+# alone: an isolated question reads on its own beside the joint read
+SEEN.clear()
+alone = json.loads(json.dumps(DEPS)); alone["questions"] = {"urgent": alone["questions"]["urgent"], "bucket": dict(alone["questions"]["bucket"], alone=True), "tone": {"type": "score", "instructions": "How angry?", "criteria": ["calm", "annoyed", "furious"]}}
+code, d = post_s1(alone)
+assert code == 200 and d["diagnostics"]["stages"] == [["urgent", "bucket", "tone"]] and d["diagnostics"]["chunks"] == [["urgent"], ["bucket"], ["tone"]], d["diagnostics"]["chunks"]
+assert len(SEEN) == 3 and all("Question bucket" not in r["messages"][0]["content"] for r in SEEN if "Question urgent" in r["messages"][0]["content"]), "own prompts per read"
+print("alone ok")
+
+# images: later stages restate the earlier answers in the state text
+SEEN.clear()
+code, d = post_s1(dict(DEPS, images=[PNG_URL]))
+assert code == 200, d
+assert d["diagnostics"]["conditioning"] == "restated" and len(SEEN) == 2
+second = SEEN[1]
+assert second["_path"].endswith("/v1/chat/completions")
+content = second["messages"][1]["content"]
+assert content[0]["type"] == "image_url" and "Answers so far:" in content[-1]["text"] and "bucket: billing" in content[-1]["text"] and "urgent: yes" in content[-1]["text"], content[-1]["text"]
+print("dependencies with images ok")
+
+# refusals
+for body, want in [
+    (dict(DEPS, questions=dict(DEPS["questions"], escalate=dict(DEPS["questions"]["escalate"], depends_on=["nope"]))), "unknown question"),
+    (dict(DEPS, questions={"a": {"type": "noul", "instructions": "?", "depends_on": ["b"]}, "b": {"type": "noul", "instructions": "?", "depends_on": ["a"]}}), "cycle"),
+    (dict(DEPS, questions=dict(DEPS["questions"], refund=dict(DEPS["questions"]["refund"], ask_if={"bucket": ["legal"]}))), "must be among"),
+    (dict(DEPS, ask=["escalate"]), "not everything it depends on"),
+]:
+    code, d = post_s1(body)
+    assert code == 422 and want in d["error"]["message"], (code, d)
+print("dependency refusals ok")
 
 # bad requests
 for body, want in [
