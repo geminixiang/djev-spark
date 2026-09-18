@@ -117,7 +117,7 @@ These go at the top level of the request body, beside `state` and `questions`.
 | `samples` | `"auto"` | Number of noise draws to average. `"auto"` reads once, then more only if the first read's entropy is above `auto_threshold`. |
 | `auto_max` | 4 | Maximum reads under `"auto"`. |
 | `auto_threshold` | 0.1 | Entropy above which `"auto"` reads again. |
-| `think` | 0 | All the model to think up to this many tokens before the read. One extra generation per decision. Text-only states. |
+| `think` | 0 | The model writes up to this many tokens of thought before the read; the read conditions on it. One extra generation per decision. With images the thought is seeded into the canvas, so the canvas bounds it. |
 | `instructions` | | Context rendered ahead of the questions. Can help KV prefix reuse when multiple questions are sent with it. |
 | `chunk_rows` | canvas | Splits a long question list into chunks of at most this many rows. Default is the served canvas. |
 | `chunk_prompt` | `"own"` | Whether each chunk's prompt lists only its own questions (`"own"`) or every question (`"shared"`). |
@@ -134,7 +134,7 @@ Jev's API has no images. This server takes them in two forms. Images go ahead of
 | multipart | `multipart/form-data` with the JSON body in a part named `request` and each image as a file part. Any part name, any number of images, in order. This is what `curl -F` and browser `FormData` send. |
 | JSON | An `images` array in the body, each entry a `data:image/...;base64,...` URL or an object `{"content_type": "image/png", "base64": "..."}`. |
 
-`think` and `sequential` need a text-only state and return 422 with images.
+`sequential` needs a text-only state and returns 422 with images.
 
 ```bash
 curl -s localhost:8011/v1/systemone \
