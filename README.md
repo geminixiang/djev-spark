@@ -110,10 +110,11 @@ webcam one-shot (capture and send), webcam live (a frame every N seconds),
 webcam realtime (capture again as each answer returns). `#req=<base64 JSON>`
 in the URL fills and sends a request on load. Off by default.
 
-![playground with the triangle test image](docs/playground.png)
+![playground in webcam realtime mode](docs/playground.jpg)
 
-The screenshot is `docs/triangle.png` sent as a data URL with "Does this
-image contain a triangle?" and a shape choice; both answered at 1.00.
+Webcam realtime mode, a phone showing a hotdog held up to the camera, 39
+frames sent, 352 ms in the server per frame. `docs/triangle.png` is a
+test image for "Does this image contain a triangle?".
 
 `POST /v1/chat/completions` is the same decision as an OpenAI-shaped call:
 system message = the schema JSON, user message = the state JSON or image
