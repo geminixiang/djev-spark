@@ -234,12 +234,12 @@ docker cp server/. dgemma:/opt/dgemma/ && docker exec dgemma pkill -f structured
 ### Cube Rule demo
 
 `http://<box-ip>:8011/cube` (with `TEST_PAGE=1`) classifies 27 Wikipedia
-food photos under the Cube Rule (toast, sandwich, taco, sushi, quiche,
-calzone, salad by where the starch sits) plus two yes/no questions, is it
-a sandwich and is it a soup, all in one read per photo. The photos are
+food photos under the Cube Rule, one read per photo: toast, sandwich,
+taco, sushi, quiche, calzone or salad by where the starch sits, plus soup
+for a starchless food that is liquid in a bowl or a cup. The photos are
 embedded in the page. Each one is sent to the server this page came from
 and its card moves from the pool into the row of the category it chose,
-sorted by confidence; faded copies land in rows that got at least 0.1.
+sorted by confidence.
 Replay animates a recorded run without the server. One photo is about a
 third of a second on the Spark.
 
