@@ -20,7 +20,8 @@
   #arrow { position: absolute; top: 10px; right: 12px; width: 84px; height: 84px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 60px; line-height: 84px; text-align: center; font-weight: 700; visibility: hidden; }
   #arrow.turn { background: rgba(179,38,30,.85); visibility: visible; }
   #arrow.ahead { background: rgba(31,143,58,.85); visibility: visible; }
-  #meta { height: 1.3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; }
+  /* Its own line, always present, one line tall, so text length never reflows anything. */
+  #meta, #status { display: block; height: 1.3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #panel { padding: 10px 14px 12px; display: grid; gap: 8px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   button { font: inherit; font-size: 18px; padding: 10px 18px; border: 0; border-radius: 10px; background: #2a6df4; color: #fff; }
@@ -44,13 +45,13 @@
   <div class="row">
     <button id="toggle">Start</button>
     <label class="small"><input id="think" type="checkbox"> think (64 tokens)</label>
-    <span id="meta" class="muted"></span>
   </div>
+  <div id="meta" class="muted">&nbsp;</div>
   <div id="bars"></div>
   <div class="row">
     <label class="small">api key <input id="key" type="password" placeholder="optional"></label>
-    <span id="status" class="muted"></span>
   </div>
+  <div id="status" class="muted">&nbsp;</div>
 </div>
 <canvas id="canvas"></canvas>
 <script>
