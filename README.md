@@ -30,6 +30,8 @@ is a combination of the open PRs (https://github.com/vllm-project/vllm/pulls/mma
   `/opt/dgemma/structured_server.py`. It is the fork's example server plus
   the `/v1/systemone` route.
 
+## Porting Notes
+
 To move to a newer engine: rebase the fork branch onto main, set `VLLM_REF`
 to its head, set `BASE` and `VLLM_BASE` to a nightly at or after that
 commit.
@@ -72,9 +74,9 @@ curl -s localhost:8011/v1/systemone -H 'content-type: application/json' -d '{
 
 ### Request
 
-| field | what it is |
+| field | description |
 |---|---|
-| `state` | The content the questions are asked about. A string is used as written; an object or array is sent as JSON. |
+| `state` | The content the questions are asked about. A string, object or array. |
 | `questions` | Map of question id to question object. Answers use the same ids, in the same order. |
 | `model` | Accepted for compatibility with Jev clients and ignored. |
 | `seed` | Optional. Seeds the noise draws; the same request with the same seed gives the same answer. Default 42. |
@@ -92,8 +94,8 @@ Each question has a `type`, an `instructions` string (the question itself), and 
 | field | what it holds |
 |---|---|
 | `answers` | One answer per question id. Shape depends on the question type; see below. |
-| `usage` | `input_tokens`: the prompt as vLLM counted it, images included. `output_tokens`: the canvas rows read, plus any thought tokens. |
-| `diagnostics` | Server-specific, not in Jev's contract: number of reads, each read's top label and entropy per question, timing, the thought if one was written, prompt token count. |
+| `usage` | `input_tokens`: the prompt input count, images included. `output_tokens`: the canvas rows read, plus any thought tokens. |
+| `diagnostics` | Server-specific, subject to change. |
 | `model` | The served model name. |
 
 | answer type | fields |
@@ -106,15 +108,17 @@ Validation errors return 422 with `{"error": {"message": ...}}`. A failed upstre
 
 ### Extensions
 
-These go at the top level of the request body, beside `state` and `questions`. None of them are part of Jev's contract.
+This server extends Jev's API.
 
-| key | default | what it does |
+These go at the top level of the request body, beside `state` and `questions`.
+
+| key | default | description |
 |---|---|---|
 | `samples` | `"auto"` | Number of noise draws to average. `"auto"` reads once, then more only if the first read's entropy is above `auto_threshold`. |
 | `auto_max` | 4 | Maximum reads under `"auto"`. |
 | `auto_threshold` | 0.1 | Entropy above which `"auto"` reads again. |
-| `think` | 0 | The model writes up to this many tokens of thought before the read; the read conditions on it. One extra generation per decision. Text-only states. |
-| `instructions` | | Context rendered ahead of the questions. A long document shared by many requests goes here so its prefill is cached. |
+| `think` | 0 | All the model to think up to this many tokens before the read. One extra generation per decision. Text-only states. |
+| `instructions` | | Context rendered ahead of the questions. Can help KV prefix reuse when multiple questions are sent with it. |
 | `chunk_rows` | canvas | Splits a long question list into chunks of at most this many rows. Default is the served canvas. |
 | `chunk_prompt` | `"own"` | Whether each chunk's prompt lists only its own questions (`"own"`) or every question (`"shared"`). |
 | `sequential` | false | Runs chunks in order, prefilling each chunk's answers before the next, so later answers condition on earlier ones. Text-only states. |
