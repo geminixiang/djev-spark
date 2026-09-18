@@ -1,34 +1,36 @@
 # syntax=docker/dockerfile:1
 # DiffusionGemma NVFP4 structured reads on a DGX Spark (GB10, aarch64, CUDA 13).
 #
-# Nothing is compiled. The base is the per-model vLLM image for GLM-5.3-Flash
-# on arm64 + cu130, pinned by digest because the tag moves: this digest is
-# the tag as pulled on 2026-09-18, vLLM 0.28.1rc1.dev580 at commit 385dce36b.
-# The structured-reads-0.28 branch of mmastrac/vllm is that commit plus the
-# read changes, which touch python files only, so the build overlays those
-# files onto the base's site-packages and asserts at build time that the
-# base's vLLM is the commit the overlay was written against.
+# Nothing is compiled. The base is one of vLLM's per-commit nightly images,
+# which are multi-arch and CUDA 13, and the fork branch holds the read changes
+# on top of upstream main, python files only. The build copies the branch's
+# changed vllm/ files over the base's site-packages. That is sound as long as
+# upstream has not touched those files between the branch's own base and the
+# image's commit, which the fork stage checks; when it has, the branch needs
+# its routine rebase onto main first.
 
-ARG BASE=vllm/vllm-openai@sha256:b0501f99fec5136f248f78d5850977a2ec32d55cd9a665f4a9ffef24cbdf7fe5
+ARG BASE=vllm/vllm-openai:nightly-dee37d89115db4c94a820a79a78a7828e141c910
 
 # --- the fork, at a pinned commit --------------------------------------------
 FROM alpine/git:latest AS fork
 ARG VLLM_FORK=https://github.com/mmastrac/vllm.git
-ARG VLLM_REF=36951f122ceedceea922b898d7acb47ed0c8444e
-ARG VLLM_BASE=385dce36bcee42309924a5ece951a96db3dce7f2
+ARG VLLM_UPSTREAM=https://github.com/vllm-project/vllm.git
+ARG VLLM_REF=bb82320bdc2eb88425c6a4a3b14780bd33bb9d03
+ARG VLLM_BASE=dee37d89115db4c94a820a79a78a7828e141c910
 RUN git clone --filter=blob:none --quiet "${VLLM_FORK}" /fork \
     && cd /fork \
     && git checkout --quiet "${VLLM_REF}" \
-    && git merge-base --is-ancestor "${VLLM_BASE}" HEAD \
-    && git diff --name-only "${VLLM_BASE}" HEAD -- vllm > /fork/changed.txt \
-    && cat /fork/changed.txt
+    && git fetch --filter=blob:none --quiet "${VLLM_UPSTREAM}" "${VLLM_BASE}" \
+    && mb=$(git merge-base "${VLLM_BASE}" HEAD) \
+    && git diff --name-only "$mb" HEAD -- vllm > /fork/changed.txt \
+    && cat /fork/changed.txt \
+    && if ! git diff --quiet "$mb" "${VLLM_BASE}" -- $(cat /fork/changed.txt); then \
+         echo "upstream changed overlaid files between the branch base and ${VLLM_BASE}; rebase the branch first" >&2; \
+         git diff --stat "$mb" "${VLLM_BASE}" -- $(cat /fork/changed.txt) >&2; exit 1; fi
 
 # --- the image ---------------------------------------------------------------
 FROM ${BASE}
-ARG VLLM_BASE=385dce36bcee42309924a5ece951a96db3dce7f2
-
-# The base already ships flashinfer 0.6.18 and cutlass-dsl 4.6.2, the
-# versions the reads were measured on, so nothing is pinned here.
+ARG VLLM_BASE=dee37d89115db4c94a820a79a78a7828e141c910
 
 # The base ships CUDA libraries without their headers and without some
 # unversioned .so symlinks. FlashInfer's JIT needs both; see the script.
