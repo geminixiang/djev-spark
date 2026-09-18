@@ -231,6 +231,18 @@ the container and kill the server process; the entrypoint restarts it.
 docker cp server/. dgemma:/opt/dgemma/ && docker exec dgemma pkill -f structured_server.py
 ```
 
+### Cube Rule demo
+
+`http://<box-ip>:8011/cube` (with `TEST_PAGE=1`) classifies 27 Wikipedia
+food photos under the Cube Rule (toast, sandwich, taco, sushi, quiche,
+calzone, salad by where the starch sits) plus two yes/no questions, is it
+a sandwich and is it a soup, all in one read per photo. The photos are
+embedded in the page. Each one is sent to the server this page came from
+and its card moves from the pool into the row of the category it chose,
+sorted by confidence; faded copies land in rows that got at least 0.1.
+Replay animates a recorded run without the server. One photo is about a
+third of a second on the Spark.
+
 ### Other routes
 
 | route | what it does |
@@ -350,5 +362,6 @@ scripts/long-context-probe.py
 server/structured_server.py
 server/playground.html
 server/walk.html
+server/cube.html
 server/test_structured_server.py
 ```

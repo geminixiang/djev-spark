@@ -85,6 +85,7 @@ PAGES = {  # served with TEST_PAGE=1
     "/": "playground.html",
     "/playground": "playground.html",
     "/walk": "walk.html",
+    "/cube": "cube.html",
 }
 CANVAS_LEN = 64      # the served canvas; a request may run narrower
 CANVAS_STEP = 16     # request widths are multiples of this
