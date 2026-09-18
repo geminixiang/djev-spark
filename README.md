@@ -74,35 +74,35 @@ curl -s localhost:8011/v1/systemone -H 'content-type: application/json' -d '{
 
 | field | what it is |
 |---|---|
-| `state` | What the questions are about. A string is used as written; an object or array is sent as JSON. |
-| `questions` | A map from your own question ids to question objects. Answers come back under the same ids, in the same order. |
+| `state` | The content the questions are asked about. A string is used as written; an object or array is sent as JSON. |
+| `questions` | Map of question id to question object. Answers use the same ids, in the same order. |
 | `model` | Accepted for compatibility with Jev clients and ignored. |
-| `seed` | Optional. Seeds the noise draws, so the same request gives the same answer. Default 42. |
+| `seed` | Optional. Seeds the noise draws; the same request with the same seed gives the same answer. Default 42. |
 
 Each question has a `type`, an `instructions` string (the question itself), and `criteria`, whose shape depends on the type:
 
 | type | what it asks | `criteria` |
 |---|---|---|
-| `noul` | A yes-or-no question. | Optional. `{"true": "what yes means", "false": "what no means"}`. The descriptions are shown to the model next to the labels. |
-| `choice` | Pick one option. | Required. An object mapping each option name to a description, or to `null` for no description. Option order is kept. |
-| `score` | Rate on an ordered scale. | Required. A list of level names from lowest to highest, at least two. |
+| `noul` | Yes or no. | Optional. `{"true": "what yes means", "false": "what no means"}`. The descriptions are rendered next to the labels in the prompt. |
+| `choice` | One of several options. | Required. Object mapping each option name to a description, or `null` for none. Option order is kept. |
+| `score` | A level on an ordered scale. | Required. List of level names from lowest to highest, at least two. |
 
 ### Response
 
 | field | what it holds |
 |---|---|
-| `answers` | One answer per question id. The shape depends on the question type; see below. |
+| `answers` | One answer per question id. Shape depends on the question type; see below. |
 | `usage` | `input_tokens`: the prompt as vLLM counted it, images included. `output_tokens`: the canvas rows read, plus any thought tokens. |
-| `diagnostics` | This server's extras, not part of Jev's contract: the number of reads, each read's top label and entropy per question, timing, the thought if one was written, and the prompt token count. |
+| `diagnostics` | Server-specific, not in Jev's contract: number of reads, each read's top label and entropy per question, timing, the thought if one was written, prompt token count. |
 | `model` | The served model name. |
 
 | answer type | fields |
 |---|---|
-| `noul` | `noul`: the probability of yes, from 0 to 1. |
-| `choice` | `choice`: the option with the most probability. `probabilities`: every option's probability, by name. `confidence`: the winning probability. |
-| `score` | `score`: the probability-weighted level, where the lowest level is 0. `legend`: level index to level name. `probabilities`: probability per level index. `confidence`: the winning level's probability. |
+| `noul` | `noul`: probability of yes, 0 to 1. |
+| `choice` | `choice`: the most probable option. `probabilities`: probability per option name. `confidence`: the probability of `choice`. |
+| `score` | `score`: probability-weighted level index, lowest level 0. `legend`: level index to level name. `probabilities`: probability per level index. `confidence`: the probability of the most probable level. |
 
-Validation problems return 422 with `{"error": {"message": ...}}`. A failed upstream call returns 502.
+Validation errors return 422 with `{"error": {"message": ...}}`. A failed upstream call returns 502.
 
 ### Extensions
 
@@ -110,27 +110,27 @@ These go at the top level of the request body, beside `state` and `questions`. N
 
 | key | default | what it does |
 |---|---|---|
-| `samples` | `"auto"` | How many noise draws to average. A number fixes it. `"auto"` reads once and reads more only when the first read looks unsure. |
-| `auto_max` | 4 | The most reads `"auto"` will take. |
-| `auto_threshold` | 0.1 | The entropy above which `"auto"` reads again. |
-| `think` | 0 | Lets the model write up to this many tokens of thought before the read, and the read conditions on it. Costs one generation per decision. Text-only states. |
-| `instructions` | | Context shown to the model ahead of the questions. Put a long document here when many requests share it, so its prefill is cached. |
-| `chunk_rows` | canvas | Splits a long question list into chunks that fit this many rows each. The default is the served canvas. |
+| `samples` | `"auto"` | Number of noise draws to average. `"auto"` reads once, then more only if the first read's entropy is above `auto_threshold`. |
+| `auto_max` | 4 | Maximum reads under `"auto"`. |
+| `auto_threshold` | 0.1 | Entropy above which `"auto"` reads again. |
+| `think` | 0 | The model writes up to this many tokens of thought before the read; the read conditions on it. One extra generation per decision. Text-only states. |
+| `instructions` | | Context rendered ahead of the questions. A long document shared by many requests goes here so its prefill is cached. |
+| `chunk_rows` | canvas | Splits a long question list into chunks of at most this many rows. Default is the served canvas. |
 | `chunk_prompt` | `"own"` | Whether each chunk's prompt lists only its own questions (`"own"`) or every question (`"shared"`). |
-| `sequential` | false | Runs the chunks in order and prefills each chunk's answers before the next, so later answers condition on earlier ones. Text-only states. |
-| `ask` | | A list of question ids to answer in one read, leaving the rest out. |
-| `steps` | 1 | Denoise steps per read. Leave at 1; more steps let the canvas drift from the template. |
+| `sequential` | false | Runs chunks in order, prefilling each chunk's answers before the next, so later answers condition on earlier ones. Text-only states. |
+| `ask` | | List of question ids to answer in one read; the rest are skipped. |
+| `steps` | 1 | Denoise steps per read. More than 1 lets the canvas drift from the template. |
 
 ### Images
 
-Jev's API has no images. This server takes them in two forms, and either way they go ahead of the state in the prompt.
+Jev's API has no images. This server takes them in two forms. Images go ahead of the state in the prompt.
 
 | form | how |
 |---|---|
-| multipart | `multipart/form-data` with the JSON body in a part named `request` and each image as a file part. Any part name, any number of images, in order. This is what `curl -F` and a browser `FormData` send. |
+| multipart | `multipart/form-data` with the JSON body in a part named `request` and each image as a file part. Any part name, any number of images, in order. This is what `curl -F` and browser `FormData` send. |
 | JSON | An `images` array in the body, each entry a `data:image/...;base64,...` URL or an object `{"content_type": "image/png", "base64": "..."}`. |
 
-`think` and `sequential` need a text-only state, so they refuse images with a 422.
+`think` and `sequential` need a text-only state and return 422 with images.
 
 ```bash
 curl -s localhost:8011/v1/systemone \
@@ -217,10 +217,10 @@ Previous build (vLLM 487ecf187 base, same patches, `MAX_MODEL_LEN=4096`,
 
 This image at `MAX_MODEL_LEN=4096 MAX_SEQS=32`: 1 client 8.29 req/s (p50
 0.12 s), 32 clients 53.37 req/s (160.1 decisions/s, p50 0.58 s, p95 0.79 s).
-The 32-client difference between the two tables is the model length, not
-the engine version.
+The 32-client difference between the two tables comes from the model
+length, not the engine version.
 
-First batch at a new tile width or batch size pays a one-time compile
+The first batch at a new tile width or batch size compiles once
 (8 concurrent cold: 7.7 s).
 
 Long states, 128k profile, one decision per state, cold then warm
