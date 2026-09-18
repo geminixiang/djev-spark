@@ -105,8 +105,15 @@ curl -s localhost:8011/v1/systemone \
 ```
 
 Playground: with `TEST_PAGE=1`, `http://<box>:8011/` serves a page with the
-request JSON in a textbox, an image file picker, and a webcam mode that
-captures one frame or submits a frame every N seconds. Off by default.
+request JSON in a textbox and an image mode dropdown: none, image file,
+webcam one-shot (capture and send), webcam live (a frame every N seconds),
+webcam realtime (capture again as each answer returns). `#req=<base64 JSON>`
+in the URL fills and sends a request on load. Off by default.
+
+![playground with the triangle test image](docs/playground.png)
+
+The screenshot is `docs/triangle.png` sent as a data URL with "Does this
+image contain a triangle?" and a shape choice; both answered at 1.00.
 
 `POST /v1/chat/completions` is the same decision as an OpenAI-shaped call:
 system message = the schema JSON, user message = the state JSON or image
