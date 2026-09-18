@@ -45,6 +45,8 @@ services:
       - TORCH_MEM_FRACTION=${TORCH_MEM_FRACTION:-}
       # 1 serves the playground page at / on the structured port.
       - TEST_PAGE=${TEST_PAGE:-}
+      # When set, POST routes on the structured port need this bearer token.
+      - API_KEY=${API_KEY:-}
       - VLLM_USE_V2_MODEL_RUNNER=1
       - VLLM_PORT=5300
       # FlashInfer's JIT runs one compiler per unit by default and a single

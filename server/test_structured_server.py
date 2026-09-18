@@ -17,6 +17,11 @@ class Fake(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(int(self.headers["content-length"])))
         req["_path"] = self.path
         SEEN.append(req)
+        if "vllm_xargs" not in req and self.path.endswith("/v1/chat/completions"):
+            # a raw chat completion passed through
+            body = json.dumps({"choices": [{"message": {"role": "assistant", "content": "raw reply"}}], "usage": {"prompt_tokens": 5}}).encode()
+            self.send_response(200); self.send_header("content-type", "application/json"); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            return
         if "vllm_xargs" not in req:
             # a thought: the fake writes a fixed one and closes the channel
             toks = [f"token_id:{i}" for i in THOUGHT + S.THOUGHT_CLOSE][:req["max_tokens"]]
@@ -261,6 +266,25 @@ assert code == 200 and b"djev playground" in page and b"/v1/systemone" in page
 assert get("/playground")[0] == 200 and get("/other")[0] == 404
 S.TEST_PAGE = False
 print("playground ok")
+
+# raw passthrough and the bearer token
+def post_raw(path, body, headers=None):
+    req = urllib.request.Request("http://127.0.0.1:8999" + path, data=json.dumps(body).encode(), headers={"content-type": "application/json", **(headers or {})})
+    try:
+        r = urllib.request.urlopen(req); return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, json.load(e)
+SEEN.clear()
+code, d = post_raw("/v1/raw/chat/completions", {"model": "dgemma", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8})
+assert code == 200 and d["choices"][0]["message"]["content"] == "raw reply" and SEEN[-1]["max_tokens"] == 8, d
+S.API_KEY = "s3cret"
+assert post_raw("/v1/systemone", jev)[0] == 401
+assert post_raw("/v1/systemone", jev, {"authorization": "Bearer wrong"})[0] == 401
+assert post_raw("/v1/systemone", dict(jev, samples=1), {"authorization": "Bearer s3cret"})[0] == 200
+assert post_raw("/v1/raw/chat/completions", {"messages": []})[0] == 401
+assert get("/health")[0] == 200, "health stays open"
+S.API_KEY = ""
+print("raw passthrough and api key ok")
 
 # bad requests
 for body, want in [

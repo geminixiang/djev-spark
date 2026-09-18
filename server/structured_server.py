@@ -19,8 +19,12 @@ POST /v1/chat/completions is the same decision as an OpenAI-shaped call: a
 system message that is the schema JSON below and a user message that is
 the state; the reply's `content` is the JSON answer set.
 
-With TEST_PAGE=1 in the environment, GET / serves playground.html: a form
-for the request JSON with an image file or webcam frames attached.
+POST /v1/raw/chat/completions passes the body to vLLM's chat completions
+unchanged, for plain generation through this port.
+
+With API_KEY set in the environment, every POST needs "Authorization:
+Bearer <key>". With TEST_PAGE=1, GET / serves playground.html: a form for
+the request JSON with an image file or webcam frames attached.
 
 Each answer is one calibrated distribution per question, from a single
 denoise step over a seeded canvas, averaged over a few noise draws. The
@@ -63,6 +67,7 @@ from transformers import AutoTokenizer
 ARGS = None
 TOK = None
 TEST_PAGE = os.environ.get("TEST_PAGE", "") == "1"  # serve the playground at /
+API_KEY = os.environ.get("API_KEY", "")  # when set, POST routes need "Authorization: Bearer <key>"
 PLAYGROUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "playground.html")
 CANVAS_LEN = 64      # the served canvas; a request may run narrower
 CANVAS_STEP = 16     # request widths are multiples of this
@@ -694,6 +699,10 @@ class Handler(BaseHTTPRequestHandler):
         return body, images
 
     def do_POST(self):
+        if API_KEY and self.headers.get("authorization", "") != f"Bearer {API_KEY}":
+            return self._json(401, {"error": {"message": "missing or wrong bearer token", "type": "authentication_error"}})
+        if self.path == "/v1/raw/chat/completions":
+            return self._raw_chat()
         try:
             req, images = self._read_request()
         except Exception as e:
@@ -703,6 +712,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/v1/chat/completions":
             return self._chat(req)
         return self._json(404, {"error": {"message": "unknown route"}})
+
+    def _raw_chat(self):
+        """vLLM's chat completions, body and status passed through."""
+        raw = self.rfile.read(int(self.headers.get("content-length", "0")))
+        req = urllib.request.Request(ARGS.upstream.rstrip("/") + "/v1/chat/completions", data=raw,
+                                     headers={"content-type": self.headers.get("content-type", "application/json")})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as r:
+                code, body = r.status, r.read()
+        except urllib.error.HTTPError as e:
+            code, body = e.code, e.read()
+        self.send_response(code)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _decide(self, schema, state, seed):
         """-> (status, body) with the error body already shaped."""

@@ -176,6 +176,7 @@ Environment variables, same defaults in `compose.yaml` and `.env.example`.
 | `HEADROOM_GB` | 12 | free memory required beyond weights, KV and transient |
 | `TORCH_MEM_FRACTION` | empty | per-worker cap; empty = unbounded |
 | `TEST_PAGE` | empty | `1` serves the playground page at `/` on the structured port |
+| `API_KEY` | empty | when set, POST routes on the structured port need `Authorization: Bearer <key>` |
 | `PORT`, `STRUCTURED_PORT` | 8010, 8011 | host network |
 
 128k profile (in `.env.example`, commented): `MAX_MODEL_LEN=131072
