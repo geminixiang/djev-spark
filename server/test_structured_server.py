@@ -264,6 +264,11 @@ S.TEST_PAGE = True
 code, page = get("/")
 assert code == 200 and b"djev playground" in page and b"/v1/systemone" in page
 assert get("/playground")[0] == 200 and get("/other")[0] == 404
+code, page = get("/walk")
+assert code == 200 and b"all clear ahead" in page and b"facingMode" in page
+S.TEST_PAGE = False
+assert get("/walk")[0] == 404
+S.TEST_PAGE = True
 S.TEST_PAGE = False
 print("playground ok")
 

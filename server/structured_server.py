@@ -24,9 +24,11 @@ unchanged, for plain generation through this port.
 
 With API_KEY set in the environment, every POST needs "Authorization:
 Bearer <key>". With TEST_PAGE=1, GET / serves playground.html: a form for
-the request JSON with an image file or webcam frames attached. Browsers
-only open the webcam on a secure origin, so --tls-port adds an HTTPS
-listener with a self-signed certificate kept in --cert-dir.
+the request JSON with an image file or webcam frames attached, and GET
+/walk serves walk.html, a phone page that streams the back camera and
+reads one hazard label per frame. Browsers only open the webcam on a
+secure origin, so --tls-port adds an HTTPS listener with a self-signed
+certificate kept in --cert-dir.
 
 Each answer is one calibrated distribution per question, from a single
 denoise step over a seeded canvas, averaged over a few noise draws. The
@@ -70,7 +72,11 @@ ARGS = None
 TOK = None
 TEST_PAGE = os.environ.get("TEST_PAGE", "") == "1"  # serve the playground at /
 API_KEY = os.environ.get("API_KEY", "")  # when set, POST routes need "Authorization: Bearer <key>"
-PLAYGROUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "playground.html")
+PAGES = {  # served with TEST_PAGE=1
+    "/": "playground.html",
+    "/playground": "playground.html",
+    "/walk": "walk.html",
+}
 CANVAS_LEN = 64      # the served canvas; a request may run narrower
 CANVAS_STEP = 16     # request widths are multiples of this
 VOCAB = 262144
@@ -666,8 +672,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._json(200, {"status": "ok"})
-        if self.path in ("/", "/playground") and TEST_PAGE:
-            body = open(PLAYGROUND, "rb").read()
+        if self.path in PAGES and TEST_PAGE:
+            body = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), PAGES[self.path]), "rb").read()
             self.send_response(200)
             self.send_header("content-type", "text/html; charset=utf-8")
             self.send_header("content-length", str(len(body)))

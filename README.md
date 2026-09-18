@@ -166,6 +166,18 @@ playground's webcam modes from another device set `TLS_PORT` (for example
 8443) and use `https://<box-ip>:8443/`; the certificate is self-signed and
 the browser asks once.
 
+### Walking demo
+
+`https://<box-ip>:8443/walk` (with `TEST_PAGE=1` and `TLS_PORT=8443`) is a
+phone page: it streams the back camera, sends a 512px frame per round trip
+as one choice question, and shows the label full width under the video
+with the probabilities below, no scrolling. Labels: all clear ahead,
+danger: stairs, danger: wall ahead, danger: object ahead, danger: pet
+ahead, door ahead. The instructions tell the model to say all clear when
+nothing is within 5 meters. A changed label is spoken aloud when "speak"
+is on. Each frame is one image decision, about 320 ms on the Spark plus
+the upload.
+
 ### Other routes
 
 | route | what it does |
@@ -284,5 +296,6 @@ scripts/self-test.sh
 scripts/long-context-probe.py
 server/structured_server.py
 server/playground.html
+server/walk.html
 server/test_structured_server.py
 ```
