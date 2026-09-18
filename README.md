@@ -208,9 +208,9 @@ a direction arrow over it, and the probabilities below, no scrolling. Hazard lab
 ahead, danger: object ahead, danger: pet ahead, door ahead; the
 instructions tell the model to judge only a 30 degree window at the
 center of the frame and to say all clear when nothing is within 2 meters
-there. When the label is a danger, a second read on the same frame asks
+there. A second question, gated with `ask_if` on the danger labels, asks
 which half of the frame the obstacle is in, and the arrow points the
-other way; otherwise the arrow is go ahead. Two things measured on
+other way; on a clear frame it is not asked and the arrow is go ahead. Two things measured on
 frames with an obstacle on a known side decided that shape. Asking the
 turn directly ("which side is more open", turn left or turn right) was
 biased right: p(turn left) 0.03 to 0.25 whichever side the obstacle was

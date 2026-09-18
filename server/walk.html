@@ -59,7 +59,9 @@ const $ = id => document.getElementById(id);
 // What the model is asked every frame. The hazard is one choice on its own:
 // a direction question in the same read drags the hazard slot toward
 // obstacles (measured: all clear fell from 0.8 to 0.04 on a clear frame).
-// The direction is a second read, only when the hazard is a danger.
+// The side of the obstacle is a second stage the server runs only when the
+// hazard is a danger (ask_if), with the hazard restated in its prompt.
+const DANGER = ["danger: stairs", "danger: wall ahead", "danger: object ahead", "danger: pet ahead"];
 const QUESTIONS = {
   ahead: {
     type: "choice",
@@ -74,19 +76,18 @@ const QUESTIONS = {
       "danger: pet ahead": "a dog, cat or other animal in the path",
       "door ahead": "a door directly ahead, open or closed"
     }
+  },
+  // Asked as perception, not as a turn: "which side is more open" biased
+  // right whatever the frame showed (p(left) 0.03 to 0.25 with the obstacle
+  // on either side), while "which half is the obstacle in" was right at
+  // 0.95 to 1.00 on the same frames. The arrow points the other way.
+  side: {
+    type: "choice",
+    instructions: "There is an obstacle ahead. Where is the nearest obstacle, stairs, wall or obstruction in the frame?",
+    criteria: {"left half": null, "right half": null},
+    ask_if: {ahead: DANGER}
   }
 };
-// Asked as perception, not as a turn: "which side is more open" biased
-// right whatever the frame showed (p(left) 0.03 to 0.25 with the obstacle
-// on either side), while "which half is the obstacle in" was right at 0.95
-// to 1.00 on the same frames. The arrow points the other way.
-function directionQuestion(hazard) {
-  return {side: {
-    type: "choice",
-    instructions: "There is an obstacle ahead: " + hazard.replace("danger: ", "").replace(" ahead", "") + ". Where is the nearest obstacle, stairs, wall or obstruction in the frame?",
-    criteria: {"left half": null, "right half": null}
-  }};
-}
 const ARROWS = {"turn left": "\u2190", "go ahead": "\u2191", "turn right": "\u2192"};
 const STATE = {note: "one frame from a phone's back camera, pointed the way the person is walking; only the center 30 degrees matters"};
 
@@ -162,13 +163,11 @@ async function step() {
   const t0 = performance.now();
   try {
     const d = await decide(blob, req);
-    const hazard = d.answers.ahead;
+    const hazard = d.answers.ahead, side = d.answers.side;
     show(hazard, Math.round(performance.now() - t0), d.diagnostics && d.diagnostics.thought);
-    if (hazard.choice.startsWith("danger")) {
-      const d2 = await decide(blob, {model: "jev-latest", state: STATE, samples: 1, questions: directionQuestion(hazard.choice)});
-      const side = d2.answers.side;
+    if (side) {
       showArrow(side.choice === "left half" ? "turn right" : "turn left", side.confidence);
-      $("meta").textContent += " · obstacle " + side.choice.replace(" half", "") + " · " + Math.round(performance.now() - t0) + " ms";
+      $("meta").textContent += " · obstacle " + side.choice.replace(" half", "");
     } else {
       showArrow("go ahead", hazard.confidence);
     }
