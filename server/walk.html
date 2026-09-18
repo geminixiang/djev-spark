@@ -120,10 +120,20 @@ function show(answer, ms, thought) {
   b.textContent = label;
   b.className = label.startsWith("danger") ? "danger" : label.startsWith("door") ? "door" : "clear";
   $("meta").textContent = Math.round(conf * 100) + "% · " + ms + " ms" + (thought ? " · thought " + thought.tokens + " tok" : "");
-  const bars = $("bars"); bars.innerHTML = "";
-  for (const [name, p] of Object.entries(answer.probabilities).sort((x, y) => y[1] - x[1])) {
-    bars.insertAdjacentHTML("beforeend", `<span>${name}</span><span class="bar"><i style="width:${Math.round(p * 100)}%"></i></span><span class="muted">${Math.round(p * 100)}%</span>`);
+  for (const [name, p] of Object.entries(answer.probabilities)) {
+    const row = BAR_ROWS[name];
+    if (!row) continue;
+    row.fill.style.width = Math.round(p * 100) + "%";
+    row.pct.textContent = Math.round(p * 100) + "%";
   }
+}
+// The rows exist from the start, in a fixed order, so answers change widths
+// and nothing else.
+const BAR_ROWS = {};
+for (const name of Object.keys(QUESTIONS.ahead.criteria)) {
+  $("bars").insertAdjacentHTML("beforeend", `<span>${name}</span><span class="bar"><i style="width:0%"></i></span><span class="muted">0%</span>`);
+  const cells = $("bars").children;
+  BAR_ROWS[name] = {fill: cells[cells.length - 2].firstElementChild, pct: cells[cells.length - 1]};
 }
 async function decide(blob, req) {
   const fd = new FormData();
