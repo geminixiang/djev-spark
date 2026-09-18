@@ -53,8 +53,10 @@
 <canvas id="canvas"></canvas>
 <script>
 const $ = id => document.getElementById(id);
-// What the model is asked every frame. One choice; the instructions carry
-// the distance rule, the criteria describe each label for the model.
+// What the model is asked every frame. The hazard is one choice on its own:
+// a direction question in the same read drags the hazard slot toward
+// obstacles (measured: all clear fell from 0.8 to 0.04 on a clear frame).
+// The direction is a second read, only when the hazard is a danger.
 const QUESTIONS = {
   ahead: {
     type: "choice",
@@ -69,18 +71,16 @@ const QUESTIONS = {
       "danger: pet ahead": "a dog, cat or other animal in the path",
       "door ahead": "a door directly ahead, open or closed"
     }
-  },
-  direction: {
-    type: "choice",
-    instructions: "Which way should the person move next to avoid obstacles? Go ahead if the path straight ahead is clear; "
-      + "turn toward the side with the most open space when it is not.",
-    criteria: {
-      "turn left": "the way ahead is blocked and the left is more open",
-      "go ahead": "the path straight ahead is clear",
-      "turn right": "the way ahead is blocked and the right is more open"
-    }
   }
 };
+function directionQuestion(hazard) {
+  return {direction: {
+    type: "choice",
+    instructions: "The way straight ahead is blocked: " + hazard.replace("danger: ", "") + ". "
+      + "To walk around it, which side has more open space?",
+    criteria: {"turn left": "the left side is more open", "turn right": "the right side is more open"}
+  }};
+}
 const ARROWS = {"turn left": "\u2190", "go ahead": "\u2191", "turn right": "\u2192"};
 const STATE = {note: "one frame from a phone's back camera, pointed the way the person is walking; only the center 30 degrees matters"};
 
@@ -106,42 +106,55 @@ function frame() {
   c.getContext("2d").drawImage(v, 0, 0, w, h);
   return new Promise(res => c.toBlob(res, "image/jpeg", 0.7));
 }
-function show(answers, ms, thought) {
-  const answer = answers.ahead, label = answer.choice, conf = answer.confidence;
+function showArrow(choice, conf) {
+  const a = $("arrow");
+  a.textContent = ARROWS[choice] || "\u00b7";
+  a.className = choice === "go ahead" ? "ahead" : choice ? "turn" : "";
+  a.title = choice ? choice + " " + Math.round(conf * 100) + "%" : "";
+}
+function show(answer, ms, thought) {
+  const label = answer.choice, conf = answer.confidence;
   const b = $("banner");
   b.textContent = label;
   b.className = label.startsWith("danger") ? "danger" : label.startsWith("door") ? "door" : "clear";
-  const dir = answers.direction;
-  const a = $("arrow");
-  a.textContent = ARROWS[dir.choice] || "?";
-  a.className = dir.choice === "go ahead" ? "ahead" : "turn";
-  a.title = dir.choice + " " + Math.round(dir.confidence * 100) + "%";
-  $("meta").textContent = Math.round(conf * 100) + "% · " + dir.choice + " " + Math.round(dir.confidence * 100) + "% · " + ms + " ms" + (thought ? " · thought " + thought.tokens + " tok" : "");
+  $("meta").textContent = Math.round(conf * 100) + "% · " + ms + " ms" + (thought ? " · thought " + thought.tokens + " tok" : "");
   const bars = $("bars"); bars.innerHTML = "";
   for (const [name, p] of Object.entries(answer.probabilities).sort((x, y) => y[1] - x[1])) {
     bars.insertAdjacentHTML("beforeend", `<span>${name}</span><span class="bar"><i style="width:${Math.round(p * 100)}%"></i></span><span class="muted">${Math.round(p * 100)}%</span>`);
   }
 }
+async function decide(blob, req) {
+  const fd = new FormData();
+  fd.append("request", JSON.stringify(req));
+  fd.append("frame", blob, "frame.jpg");
+  const headers = {}; const k = $("key").value.trim(); if (k) headers["authorization"] = "Bearer " + k;
+  const resp = await fetch("/v1/systemone", {method: "POST", headers, body: fd});
+  const d = await resp.json();
+  if (!resp.ok) throw new Error((d.error && d.error.message) || resp.status);
+  return d;
+}
 async function step() {
   if (!running || inflight) return;
   inflight = true;
   const blob = await frame();
-  const fd = new FormData();
   const req = {model: "jev-latest", state: STATE, samples: 1, questions: QUESTIONS};
   if ($("think").checked) {
     // The model tends to restate the task first; point the short budget at the scene.
     req.think = 64;
     req.instructions = "Before answering, think in one short sentence about what is within 2 meters straight ahead. Do not restate the question.";
   }
-  fd.append("request", JSON.stringify(req));
-  fd.append("frame", blob, "frame.jpg");
-  const headers = {}; const k = $("key").value.trim(); if (k) headers["authorization"] = "Bearer " + k;
   const t0 = performance.now();
   try {
-    const resp = await fetch("/v1/systemone", {method: "POST", headers, body: fd});
-    const d = await resp.json();
-    if (!resp.ok) throw new Error((d.error && d.error.message) || resp.status);
-    show(d.answers, Math.round(performance.now() - t0), d.diagnostics && d.diagnostics.thought);
+    const d = await decide(blob, req);
+    const hazard = d.answers.ahead;
+    show(hazard, Math.round(performance.now() - t0), d.diagnostics && d.diagnostics.thought);
+    if (hazard.choice.startsWith("danger")) {
+      const d2 = await decide(blob, {model: "jev-latest", state: STATE, samples: 1, questions: directionQuestion(hazard.choice)});
+      showArrow(d2.answers.direction.choice, d2.answers.direction.confidence);
+      $("meta").textContent += " · " + d2.answers.direction.choice + " " + Math.round(d2.answers.direction.confidence * 100) + "% · " + Math.round(performance.now() - t0) + " ms total";
+    } else {
+      showArrow("go ahead", hazard.confidence);
+    }
     $("status").textContent = "";
   } catch (e) {
     $("status").textContent = "error: " + e.message;
