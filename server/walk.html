@@ -115,7 +115,11 @@ async function step() {
   const blob = await frame();
   const fd = new FormData();
   const req = {model: "jev-latest", state: STATE, samples: 1, questions: QUESTIONS};
-  if ($("think").checked) req.think = 64;
+  if ($("think").checked) {
+    // The model tends to restate the task first; point the short budget at the scene.
+    req.think = 64;
+    req.instructions = "Before answering, think in one short sentence about what is within 2 meters straight ahead. Do not restate the question.";
+  }
   fd.append("request", JSON.stringify(req));
   fd.append("frame", blob, "frame.jpg");
   const headers = {}; const k = $("key").value.trim(); if (k) headers["authorization"] = "Bearer " + k;
