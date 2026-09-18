@@ -2,34 +2,30 @@
 
 DiffusionGemma as Jev, for the Spark: DiffusionGemma 26B-A4B (NVFP4) on a DGX
 Spark, serving structured decisions.
-One container: vLLM with the structured-reads patches on port 8010, the
-structured decision server on port 8011 in front of it. The server speaks
-Jev's `POST /v1/systemone` contract.
 
-The engine patches are [vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250).
+This is a single container that runs vLLM with the structured-reads patches on port 8010, and the
+structured decision server on port 8011 in front of it. The server speaks Jev's `POST /v1/systemone` API.
+
+The engine patches are from [vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250).
 The container builds from branch `structured-reads-spark` of
-[mmastrac/vllm](https://github.com/mmastrac/vllm/tree/structured-reads-spark),
-which is that PR plus the open dtype-cast fix.
+[mmastrac/vllm](https://github.com/mmastrac/vllm/tree/structured-reads-spark), which
+is a combination of the open PRs (https://github.com/vllm-project/vllm/pulls/mmastrac).
 
 ## Image
 
 - Base: `vllm/vllm-openai:nightly-dee37d89115db4c94a820a79a78a7828e141c910`.
-  vLLM publishes one of these per main commit, multi-arch, CUDA 13.0.2.
-  This one is vLLM 0.29.1rc1.dev347 and ships flashinfer 0.6.18.post1 with
-  its prebuilt kernel cache, so the engine starts in about 90 s with no JIT.
+  vLLM 0.29.1rc1.dev347 and ships flashinfer 0.6.18.post1 with
+  a prebuilt kernel cache, so the engine starts in about 90 s with no JIT.
 - Overlay: the fork branch's changed `vllm/` files (9 files) are copied over
-  the base's site-packages. Nothing is compiled. The fork stage of the
-  Dockerfile fails the build if upstream touched any of those files between
-  the branch's base and the image's commit; that is when the branch needs a
-  rebase onto main.
+  the base's site-packages.
 - `patches/link_cuda_headers.sh`: links the CUDA headers and unversioned
-  `.so` names the base leaves out. FlashInfer's JIT needs them when it runs.
+  `.so` names the base leaves out. FlashInfer's JIT needs them when it runs (it currently doesn't but just in case).
 - `patches/raise_recompile_limit.py`: sets torch dynamo's recompile limit
   to 64 for the sampler module. Each canvas width is one specialization
-  and the default of 8 is exceeded in normal use.
+  and the default of 8 is too small for normal use.
 - `patches/worker_memory_cap.py`, `patches/spark_mem_trace.py`: per-worker
   memory cap, active only when `TORCH_MEM_FRACTION` is set. From
-  home-infra `infra/docker/spark/glm53/patches`.
+  a local, un-upstreamed patch (this one might get dropped later on).
 - `server/structured_server.py`: the structured server, installed at
   `/opt/dgemma/structured_server.py`. It is the fork's example server plus
   the `/v1/systemone` route.
@@ -40,13 +36,13 @@ commit.
 
 ## Requirements
 
+This _might_ work on other hardware, reports welcome.
+
 - DGX Spark or other GB10 box (aarch64, unified memory, CUDA 13 driver).
 - Docker with the NVIDIA runtime and BuildKit.
 - 25 GB disk for the image, 18 GB for the checkpoint.
 - Memory: weights 19 GB, KV pool `KV_CACHE_GB`, plus a start-up transient
-  that scales with `MAX_SEQS x CANVAS`. The entrypoint refuses to start
-  unless that plus `HEADROOM_GB` is free. An overshoot on unified memory
-  hangs the host.
+  that scales with `MAX_SEQS x CANVAS`.
 
 ## Run
 
@@ -58,8 +54,8 @@ docker compose logs -f dgemma
 scripts/smoke.sh
 ```
 
-`POST /v1/systemone` takes Jev's request body and returns Jev's answers.
-No API key. `model` is accepted and ignored.
+`POST /v1/systemone` accepts Jev's request body format and returns Jev's style of answers.
+No API key. `model` is ignored.
 
 ```bash
 curl -s localhost:8011/v1/systemone -H 'content-type: application/json' -d '{
@@ -90,7 +86,7 @@ auto), `auto_max`, `auto_threshold`, `think` (thought budget in tokens),
 `chunk_rows`, `chunk_prompt`, `sequential`, `ask`, `steps`, `instructions`
 (context rendered ahead of the questions), `seed`.
 
-Images: Jev's contract has no images, so this server takes them two ways.
+Images: Jev's API has no images, so this server takes them in two possible forms.
 Either `multipart/form-data` with the JSON body in a part named `request`
 and each image as a file part (any name, in order), or an `images` array
 in the JSON body holding `data:image/...;base64,...` URLs or
@@ -110,16 +106,13 @@ webcam one-shot (capture and send), webcam live (a frame every N seconds),
 webcam realtime (capture again as each answer returns). `#req=<base64 JSON>`
 in the URL fills and sends a request on load. Off by default.
 
+Webcam live image mode:
+
 ![playground in webcam realtime mode](docs/playground.jpg)
 
-Webcam realtime mode, a phone showing a hotdog held up to the camera, 39
-frames sent, 352 ms in the server per frame. `docs/triangle.png` is a
-test image for "Does this image contain a triangle?".
+Static image tests:
 
-`POST /v1/chat/completions` is the same decision as an OpenAI-shaped call:
-system message = the schema JSON, user message = the state JSON or image
-parts; reply `content` = the answer JSON. Schema documented at the top of
-`server/structured_server.py`.
+![playground with image](docs/triangle.jpg)
 
 ## Configuration
 
