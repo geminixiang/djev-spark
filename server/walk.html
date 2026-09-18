@@ -82,7 +82,7 @@ const QUESTIONS = {
 function directionQuestion(hazard) {
   return {side: {
     type: "choice",
-    instructions: "There is " + hazard.replace("danger: ", "") + " ahead. Where is the nearest obstacle, stairs, wall or obstruction in the frame?",
+    instructions: "There is an obstacle ahead: " + hazard.replace("danger: ", "").replace(" ahead", "") + ". Where is the nearest obstacle, stairs, wall or obstruction in the frame?",
     criteria: {"left half": null, "right half": null}
   }};
 }
