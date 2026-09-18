@@ -133,6 +133,11 @@ Same curve with `MAX_SEQS=16`: 32 clients 42.89 req/s, p50 0.74 s.
 Previous build (vLLM 487ecf187 base, same patches, `MAX_MODEL_LEN=4096`,
 2026-09-17): 1 client 8.7 req/s, 8 clients 27.8, 32 clients 53.3 to 54.0.
 
+This image at `MAX_MODEL_LEN=4096 MAX_SEQS=32`: 1 client 8.29 req/s (p50
+0.12 s), 32 clients 53.37 req/s (160.1 decisions/s, p50 0.58 s, p95 0.79 s).
+The 32-client difference between the two tables is the model length, not
+the engine version.
+
 First batch at a new tile width or batch size pays a one-time compile
 (8 concurrent cold: 7.7 s).
 
