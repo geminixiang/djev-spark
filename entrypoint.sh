@@ -15,6 +15,7 @@ GPU_UTIL=${GPU_UTIL:-0.40}
 ATTN=${ATTN:-TRITON_ATTN}
 PORT=${PORT:-8010}
 STRUCTURED_PORT=${STRUCTURED_PORT:-8011}
+TLS_PORT=${TLS_PORT:-0}
 EXTRA_ARGS=${EXTRA_ARGS:---async-scheduling}
 KV_CACHE_GB=${KV_CACHE_GB:-2}
 MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-}
@@ -63,7 +64,7 @@ healthy "$PORT" || { echo "vllm not healthy after ${WAIT_SECS}s" >&2; kill "$VLL
 echo "vllm ready on :${PORT}"
 
 python3 /opt/dgemma/structured_server.py --upstream "http://127.0.0.1:${PORT}" --model "$SERVED_NAME" \
-  --tokenizer "$MODEL" --canvas "$CANVAS" --port "$STRUCTURED_PORT" &
+  --tokenizer "$MODEL" --canvas "$CANVAS" --port "$STRUCTURED_PORT" --tls-port "$TLS_PORT" --cert-dir /root/.cache/djev &
 SERVER_PID=$!
 
 trap 'kill "$VLLM_PID" "$SERVER_PID" 2>/dev/null; wait' TERM INT

@@ -24,7 +24,9 @@ unchanged, for plain generation through this port.
 
 With API_KEY set in the environment, every POST needs "Authorization:
 Bearer <key>". With TEST_PAGE=1, GET / serves playground.html: a form for
-the request JSON with an image file or webcam frames attached.
+the request JSON with an image file or webcam frames attached. Browsers
+only open the webcam on a secure origin, so --tls-port adds an HTTPS
+listener with a self-signed certificate kept in --cert-dir.
 
 Each answer is one calibrated distribution per question, from a single
 denoise step over a seeded canvas, averaged over a few noise draws. The
@@ -58,7 +60,7 @@ then run this in front of it:
   python structured_server.py --upstream http://127.0.0.1:8000 \
       --tokenizer google/diffusiongemma-26B-A4B-it --canvas 64 --port 8011
 """
-import argparse, base64, json, math, os, random, threading, time, urllib.error, urllib.request
+import argparse, base64, json, math, os, random, ssl, subprocess, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -804,6 +806,27 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
+def self_signed(cert_dir):
+    """Paths of a self-signed certificate and key in cert_dir, made with
+    openssl on first use."""
+    os.makedirs(cert_dir, exist_ok=True)
+    cert, key = os.path.join(cert_dir, "djev.crt"), os.path.join(cert_dir, "djev.key")
+    if not (os.path.exists(cert) and os.path.exists(key)):
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650", "-subj", "/CN=djev",
+                        "-keyout", key, "-out", cert], check=True, capture_output=True)
+    return cert, key
+
+
+def serve_tls(host, port, cert_dir):
+    cert, key = self_signed(cert_dir)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    srv = ThreadingHTTPServer((host, port), Handler)
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 def main():
     global ARGS, CANVAS_LEN, CANVAS_STEP
     p = argparse.ArgumentParser()
@@ -814,10 +837,15 @@ def main():
     p.add_argument("--canvas-step", type=int, default=16, help="request widths round up to a multiple of this")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8011)
+    p.add_argument("--tls-port", type=int, default=0, help="also listen with HTTPS here (0 = off)")
+    p.add_argument("--cert-dir", default=os.path.expanduser("~/.cache/djev"), help="where the self-signed certificate lives")
     ARGS = p.parse_args()
     CANVAS_LEN = ARGS.canvas
     CANVAS_STEP = ARGS.canvas_step
     init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))
+    if ARGS.tls_port:
+        serve_tls(ARGS.host, ARGS.tls_port, ARGS.cert_dir)
+        print(f"structured server https on {ARGS.host}:{ARGS.tls_port} (self-signed)", flush=True)
     print(f"structured server on {ARGS.host}:{ARGS.port} -> {ARGS.upstream} (canvas {CANVAS_LEN})", flush=True)
     ThreadingHTTPServer((ARGS.host, ARGS.port), Handler).serve_forever()
 

@@ -33,6 +33,9 @@ services:
       - ATTN=${ATTN:-TRITON_ATTN}
       - PORT=${PORT:-8010}
       - STRUCTURED_PORT=${STRUCTURED_PORT:-8011}
+      # Nonzero adds an HTTPS listener with a self-signed certificate, which
+      # browsers need before they open a webcam for the playground.
+      - TLS_PORT=${TLS_PORT:-0}
       - EXTRA_ARGS=${EXTRA_ARGS:---async-scheduling}
       # KV pool in GiB, fixed rather than derived from GPU_UTIL. Size it to
       # MAX_MODEL_LEN times the requests that must fit at once.

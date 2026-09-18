@@ -286,6 +286,14 @@ assert get("/health")[0] == 200, "health stays open"
 S.API_KEY = ""
 print("raw passthrough and api key ok")
 
+# https listener with a self-signed certificate
+import ssl, tempfile
+S.serve_tls("127.0.0.1", 8997, tempfile.mkdtemp())
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+r = urllib.request.urlopen("https://127.0.0.1:8997/health", context=ctx)
+assert r.status == 200 and json.load(r) == {"status": "ok"}
+print("tls ok")
+
 # bad requests
 for body, want in [
     ({"messages": [{"role": "user", "content": "{}"}]}, "exactly two"),

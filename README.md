@@ -157,6 +157,15 @@ Static image tests:
 
 ![playground with image](docs/triangle.png)
 
+### From another device
+
+The container is on the host network and both servers listen on all
+interfaces, so `http://<box-ip>:8011/` works from the LAN with no port
+mapping. Browsers open a webcam only on a secure origin, so for the
+playground's webcam modes from another device set `TLS_PORT` (for example
+8443) and use `https://<box-ip>:8443/`; the certificate is self-signed and
+the browser asks once.
+
 ### Other routes
 
 | route | what it does |
@@ -184,6 +193,7 @@ Environment variables, same defaults in `compose.yaml` and `.env.example`.
 | `HEADROOM_GB` | 12 | free memory required beyond weights, KV and transient |
 | `TORCH_MEM_FRACTION` | empty | per-worker cap; empty = unbounded |
 | `TEST_PAGE` | empty | `1` serves the playground page at `/` on the structured port |
+| `TLS_PORT` | 0 | nonzero adds an HTTPS listener with a self-signed certificate; browsers need it to open a webcam from another device |
 | `API_KEY` | empty | when set, POST routes on the structured port need `Authorization: Bearer <key>` |
 | `PORT`, `STRUCTURED_PORT` | 8010, 8011 | host network |
 
