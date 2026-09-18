@@ -104,6 +104,10 @@ curl -s localhost:8011/v1/systemone \
   -F 'photo=@returns/1234.jpg'
 ```
 
+Playground: with `TEST_PAGE=1`, `http://<box>:8011/` serves a page with the
+request JSON in a textbox, an image file picker, and a webcam mode that
+captures one frame or submits a frame every N seconds. Off by default.
+
 `POST /v1/chat/completions` is the same decision as an OpenAI-shaped call:
 system message = the schema JSON, user message = the state JSON or image
 parts; reply `content` = the answer JSON. Schema documented at the top of
@@ -127,6 +131,7 @@ Environment variables, same defaults in `compose.yaml` and `.env.example`.
 | `EXTRA_ARGS` | `--async-scheduling` | appended to `vllm serve` |
 | `HEADROOM_GB` | 12 | free memory required beyond weights, KV and transient |
 | `TORCH_MEM_FRACTION` | empty | per-worker cap; empty = unbounded |
+| `TEST_PAGE` | empty | `1` serves the playground page at `/` on the structured port |
 | `PORT`, `STRUCTURED_PORT` | 8010, 8011 | host network |
 
 128k profile (in `.env.example`, commented): `MAX_MODEL_LEN=131072
@@ -215,5 +220,6 @@ scripts/smoke.sh
 scripts/self-test.sh
 scripts/long-context-probe.py
 server/structured_server.py
+server/playground.html
 server/test_structured_server.py
 ```

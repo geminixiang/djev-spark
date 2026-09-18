@@ -19,6 +19,9 @@ POST /v1/chat/completions is the same decision as an OpenAI-shaped call: a
 system message that is the schema JSON below and a user message that is
 the state; the reply's `content` is the JSON answer set.
 
+With TEST_PAGE=1 in the environment, GET / serves playground.html: a form
+for the request JSON with an image file or webcam frames attached.
+
 Each answer is one calibrated distribution per question, from a single
 denoise step over a seeded canvas, averaged over a few noise draws. The
 canvas, tokenizer, slot resolution, noise draws and averaging stay behind
@@ -51,7 +54,7 @@ then run this in front of it:
   python structured_server.py --upstream http://127.0.0.1:8000 \
       --tokenizer google/diffusiongemma-26B-A4B-it --canvas 64 --port 8011
 """
-import argparse, base64, json, math, random, threading, time, urllib.error, urllib.request
+import argparse, base64, json, math, os, random, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -59,6 +62,8 @@ from transformers import AutoTokenizer
 
 ARGS = None
 TOK = None
+TEST_PAGE = os.environ.get("TEST_PAGE", "") == "1"  # serve the playground at /
+PLAYGROUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "playground.html")
 CANVAS_LEN = 64      # the served canvas; a request may run narrower
 CANVAS_STEP = 16     # request widths are multiples of this
 VOCAB = 262144
@@ -654,6 +659,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._json(200, {"status": "ok"})
+        if self.path in ("/", "/playground") and TEST_PAGE:
+            body = open(PLAYGROUND, "rb").read()
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         return self._json(404, {"error": {"message": "unknown route"}})
 
     def _read_request(self):

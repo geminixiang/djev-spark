@@ -247,6 +247,21 @@ code, d = post_mp([("request", None, "application/json", b"{}"), ("notes", "n.tx
 assert code == 400 and "neither" in d["error"]["message"], d
 print("images ok")
 
+# the playground page, only with TEST_PAGE=1
+def get(path):
+    try:
+        r = urllib.request.urlopen("http://127.0.0.1:8999" + path); return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+S.TEST_PAGE = False
+assert get("/")[0] == 404 and get("/health")[0] == 200
+S.TEST_PAGE = True
+code, page = get("/")
+assert code == 200 and b"djev playground" in page and b"/v1/systemone" in page
+assert get("/playground")[0] == 200 and get("/other")[0] == 404
+S.TEST_PAGE = False
+print("playground ok")
+
 # bad requests
 for body, want in [
     ({"messages": [{"role": "user", "content": "{}"}]}, "exactly two"),

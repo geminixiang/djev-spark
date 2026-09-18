@@ -57,7 +57,7 @@ RUN python3 /tmp/worker_memory_cap.py && rm /tmp/worker_memory_cap.py
 
 # The structured server: this repo's copy, which is the fork's example
 # server plus Jev's /v1/systemone contract.
-COPY server/structured_server.py server/test_structured_server.py /opt/dgemma/
+COPY server/structured_server.py server/playground.html server/test_structured_server.py /opt/dgemma/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && python3 -m py_compile /opt/dgemma/structured_server.py
 

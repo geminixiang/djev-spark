@@ -43,6 +43,8 @@ services:
       # Empty leaves the worker unbounded, as upstream. A fraction turns a
       # runaway allocation into a failed request instead of a hung host.
       - TORCH_MEM_FRACTION=${TORCH_MEM_FRACTION:-}
+      # 1 serves the playground page at / on the structured port.
+      - TEST_PAGE=${TEST_PAGE:-}
       - VLLM_USE_V2_MODEL_RUNNER=1
       - VLLM_PORT=5300
       # FlashInfer's JIT runs one compiler per unit by default and a single
