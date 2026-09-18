@@ -7,9 +7,11 @@ the structured decision server on port 8011 in front of it.
 A structured decision is one denoise step over a seeded canvas: the server
 turns a question schema into the canvas, reads a calibrated distribution per
 question from the logprobs, and returns the answers as JSON. The engine
-changes are on the `structured-reads` branch of
-[mmastrac/vllm](https://github.com/mmastrac/vllm/tree/structured-reads) and
-upstream as [vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250).
+changes are upstream as
+[vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250);
+the container builds from the `structured-reads-spark` branch of
+[mmastrac/vllm](https://github.com/mmastrac/vllm/tree/structured-reads-spark),
+which is that PR plus the open dtype-cast fix.
 
 ## What the image is
 
@@ -99,6 +101,8 @@ Every knob is an environment variable with the same default in
 | `GPU_UTIL` | 0.40 | fraction of the box's memory vLLM plans for |
 | `ATTN` | TRITON_ATTN | attention backend; FlashInfer cannot mix causal and bidirectional here |
 | `EXTRA_ARGS` | `--async-scheduling` | appended to `vllm serve` |
+| `KV_CACHE_GB` | 2 | KV pool in GiB; the 128k profile uses 24 |
+| `MAX_NUM_BATCHED_TOKENS` | empty | prefill chunk; empty keeps vLLM's default, which measured best |
 | `HEADROOM_GB` | 12 | free memory the entrypoint insists on beyond weights and transient |
 | `TORCH_MEM_FRACTION` | empty | per-worker cap; empty leaves the worker unbounded |
 | `PORT`, `STRUCTURED_PORT` | 8010, 8011 | the two listeners, on the host network |
