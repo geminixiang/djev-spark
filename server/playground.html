@@ -162,6 +162,7 @@ async function send() {
   let body;
   try { body = JSON.parse($("req").value); } catch (e) { $("status").innerHTML = '<span class="err">request is not JSON: ' + e.message + "</span>"; return false; }
   body.seed = parseInt($("seed").value) || 42;
+  if (!blob && Array.isArray(body.images) && typeof body.images[0] === "string") { $("preview").src = body.images[0]; $("preview").hidden = false; }
   inflight = true; $("send").disabled = true; $("status").textContent = "sending...";
   const t0 = performance.now();
   let resp, text;
@@ -205,6 +206,12 @@ async function send() {
   return resp.ok;
 }
 $("send").onclick = send;
+if (location.hash.startsWith("#req=")) {
+  try {
+    $("req").value = JSON.stringify(JSON.parse(atob(decodeURIComponent(location.hash.slice(5)))), null, 2);
+    send();
+  } catch (e) { $("status").innerHTML = '<span class="err">bad #req: ' + e.message + "</span>"; }
+}
 $("req").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(); });
 </script>
 </body>
