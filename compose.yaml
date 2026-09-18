@@ -34,6 +34,11 @@ services:
       - PORT=${PORT:-8010}
       - STRUCTURED_PORT=${STRUCTURED_PORT:-8011}
       - EXTRA_ARGS=${EXTRA_ARGS:---async-scheduling}
+      # KV pool in GiB, fixed rather than derived from GPU_UTIL. Size it to
+      # MAX_MODEL_LEN times the requests that must fit at once.
+      - KV_CACHE_GB=${KV_CACHE_GB:-2}
+      # Empty keeps vLLM's default prefill chunk.
+      - MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-}
       - HEADROOM_GB=${HEADROOM_GB:-12}
       # Empty leaves the worker unbounded, as upstream. A fraction turns a
       # runaway allocation into a failed request instead of a hung host.

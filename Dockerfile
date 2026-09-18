@@ -2,19 +2,20 @@
 # DiffusionGemma NVFP4 structured reads on a DGX Spark (GB10, aarch64, CUDA 13).
 #
 # Nothing is compiled. The base is the per-model vLLM image for GLM-5.3-Flash
-# on arm64 + cu130, whose vLLM is commit 487ecf187. The structured-reads
-# branch of mmastrac/vllm is that commit plus the read changes, which touch
-# python files only, so the build overlays those files onto the base's
-# site-packages and asserts at build time that the base is still the commit
-# the overlay was written against.
+# on arm64 + cu130, pinned by digest because the tag moves: this digest is
+# the tag as pulled on 2026-09-18, vLLM 0.28.1rc1.dev580 at commit 385dce36b.
+# The structured-reads-0.28 branch of mmastrac/vllm is that commit plus the
+# read changes, which touch python files only, so the build overlays those
+# files onto the base's site-packages and asserts at build time that the
+# base's vLLM is the commit the overlay was written against.
 
-ARG BASE=vllm/vllm-openai:glm53-flash-arm64-cu130
+ARG BASE=vllm/vllm-openai@sha256:b0501f99fec5136f248f78d5850977a2ec32d55cd9a665f4a9ffef24cbdf7fe5
 
 # --- the fork, at a pinned commit --------------------------------------------
 FROM alpine/git:latest AS fork
 ARG VLLM_FORK=https://github.com/mmastrac/vllm.git
-ARG VLLM_REF=1050fbca07f7c08f1221819fc5dc556554743ac3
-ARG VLLM_BASE=487ecf187d3dfe74d2cf6119a92881dba403c219
+ARG VLLM_REF=36951f122ceedceea922b898d7acb47ed0c8444e
+ARG VLLM_BASE=385dce36bcee42309924a5ece951a96db3dce7f2
 RUN git clone --filter=blob:none --quiet "${VLLM_FORK}" /fork \
     && cd /fork \
     && git checkout --quiet "${VLLM_REF}" \
@@ -24,21 +25,10 @@ RUN git clone --filter=blob:none --quiet "${VLLM_FORK}" /fork \
 
 # --- the image ---------------------------------------------------------------
 FROM ${BASE}
-ARG VLLM_BASE=487ecf187d3dfe74d2cf6119a92881dba403c219
+ARG VLLM_BASE=385dce36bcee42309924a5ece951a96db3dce7f2
 
-# FlashInfer nightly at the version the reads were measured on. The nightly
-# skews cutlass-dsl, which GB10's CuTeDSL wants back. flashinfer-jit-cache is
-# removed so every kernel is JIT-built for this GPU on first start; the result
-# lives under /root/.cache, so that cost is paid once per host.
-ARG FLASHINFER_VERSION=0.6.18.dev20260819
-ARG CUTLASS_DSL_VERSION=4.6.2
-RUN pip install --no-cache-dir --pre \
-        "flashinfer-python==${FLASHINFER_VERSION}" \
-        "flashinfer-cubin==${FLASHINFER_VERSION}" \
-        --extra-index-url https://flashinfer.ai/whl/nightly/ \
-    && pip uninstall -q -y flashinfer-jit-cache \
-    && pip install --no-cache-dir "nvidia-cutlass-dsl==${CUTLASS_DSL_VERSION}" \
-    && python3 -c "import flashinfer; print('flashinfer', flashinfer.__version__)"
+# The base already ships flashinfer 0.6.18 and cutlass-dsl 4.6.2, the
+# versions the reads were measured on, so nothing is pinned here.
 
 # The base ships CUDA libraries without their headers and without some
 # unversioned .so symlinks. FlashInfer's JIT needs both; see the script.
