@@ -176,8 +176,13 @@ ahead, danger: object ahead, danger: pet ahead, door ahead; the
 instructions tell the model to judge only a 30 degree window at the
 center of the frame and to say all clear when nothing is within 2 meters
 there. When the label is a danger, a second read on the same frame asks
-which side is more open, turn left or turn right, with the hazard named
-in its prompt; otherwise the arrow is go ahead. The two questions are not
+which half of the frame the obstacle is in, and the arrow points the
+other way; otherwise the arrow is go ahead. Two things measured on
+frames with an obstacle on a known side decided that shape. Asking the
+turn directly ("which side is more open", turn left or turn right) was
+biased right: p(turn left) 0.03 to 0.25 whichever side the obstacle was
+on, and listing right first flipped it the other way. Asking where the
+obstacle is was right at 0.95 to 1.00. And the two questions are not
 asked in one read: a direction question beside the hazard question
 pulled the hazard slot toward obstacles (all clear on a clear frame fell
 from 0.8 to 0.04). A clear frame is one image decision, about 320 ms on

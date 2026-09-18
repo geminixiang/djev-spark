@@ -75,12 +75,15 @@ const QUESTIONS = {
     }
   }
 };
+// Asked as perception, not as a turn: "which side is more open" biased
+// right whatever the frame showed (p(left) 0.03 to 0.25 with the obstacle
+// on either side), while "which half is the obstacle in" was right at 0.95
+// to 1.00 on the same frames. The arrow points the other way.
 function directionQuestion(hazard) {
-  return {direction: {
+  return {side: {
     type: "choice",
-    instructions: "The way straight ahead is blocked: " + hazard.replace("danger: ", "") + ". "
-      + "To walk around it, which side has more open space?",
-    criteria: {"turn left": "the left side is more open", "turn right": "the right side is more open"}
+    instructions: "There is " + hazard.replace("danger: ", "") + " ahead. Where is the nearest obstacle, stairs, wall or obstruction in the frame?",
+    criteria: {"left half": null, "right half": null}
   }};
 }
 const ARROWS = {"turn left": "\u2190", "go ahead": "\u2191", "turn right": "\u2192"};
@@ -162,8 +165,9 @@ async function step() {
     show(hazard, Math.round(performance.now() - t0), d.diagnostics && d.diagnostics.thought);
     if (hazard.choice.startsWith("danger")) {
       const d2 = await decide(blob, {model: "jev-latest", state: STATE, samples: 1, questions: directionQuestion(hazard.choice)});
-      showArrow(d2.answers.direction.choice, d2.answers.direction.confidence);
-      $("meta").textContent += " · " + Math.round(performance.now() - t0) + " ms with turn";
+      const side = d2.answers.side;
+      showArrow(side.choice === "left half" ? "turn right" : "turn left", side.confidence);
+      $("meta").textContent += " · obstacle " + side.choice.replace(" half", "") + " · " + Math.round(performance.now() - t0) + " ms";
     } else {
       showArrow("go ahead", hazard.confidence);
     }
