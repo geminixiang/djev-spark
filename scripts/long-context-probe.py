@@ -12,11 +12,11 @@ import urllib.request
 
 STRUCTURED = "http://127.0.0.1:8011"
 VLLM = "http://127.0.0.1:8010"
-SCHEMA = {"questions": [
-    {"id": "topic", "type": "choice", "instructions": "What is the document about?",
-     "options": ["shipping logistics", "a software incident", "a cooking recipe", "a court ruling"]},
-    {"id": "urgent", "type": "noul", "instructions": "Does the document ask for action today?"},
-], "samples": 1}
+QUESTIONS = {
+    "topic": {"type": "choice", "instructions": "What is the document about?",
+              "criteria": {"shipping logistics": None, "a software incident": None, "a cooking recipe": None, "a court ruling": None}},
+    "urgent": {"type": "noul", "instructions": "Does the document ask for action today?"},
+}
 PARAGRAPH = ("At 03:12 the on-call engineer was paged: the checkout service was returning errors for "
              "about a third of requests. The database primary had failed over and the replica was "
              "serving stale connection pools. Restarting the pods cleared it by 03:40. ")
@@ -29,12 +29,10 @@ def tokens_of(text):
 
 
 def decide(state):
-    body = {"messages": [{"role": "system", "content": json.dumps(SCHEMA)}, {"role": "user", "content": json.dumps(state)}]}
-    req = urllib.request.Request(STRUCTURED + "/v1/chat/completions", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
+    body = {"model": "jev-latest", "state": state, "questions": QUESTIONS, "samples": 1}
+    req = urllib.request.Request(STRUCTURED + "/v1/systemone", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
     t = time.time()
-    d = json.load(urllib.request.urlopen(req, timeout=1800))
-    out = json.loads(d["choices"][0]["message"]["content"])
-    return out, time.time() - t
+    return json.load(urllib.request.urlopen(req, timeout=1800)), time.time() - t
 
 
 def kv_usage():
@@ -55,4 +53,4 @@ for want in [int(a) for a in sys.argv[1:]] or [8000, 32000, 100000]:
     out2, warm = decide(state)
     a = out["answers"]
     print(f"{ntok:7d} tokens: cold {cold:6.2f} s, warm {warm:6.2f} s, KV usage {kv_usage()}, "
-          f"topic={a['topic']['choice']!r} ({a['topic']['confidence']:.2f}) urgent={a['urgent']['label']} ({a['urgent']['confidence']:.2f})", flush=True)
+          f"topic={a['topic']['choice']!r} ({a['topic']['confidence']:.2f}) urgent={a['urgent']['noul']:.2f}", flush=True)

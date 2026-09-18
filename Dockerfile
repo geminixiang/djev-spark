@@ -55,10 +55,9 @@ COPY patches/spark_mem_trace.py /usr/local/lib/python3.12/dist-packages/spark_me
 COPY patches/worker_memory_cap.py /tmp/worker_memory_cap.py
 RUN python3 /tmp/worker_memory_cap.py && rm /tmp/worker_memory_cap.py
 
-# The structured server, from the same fork commit as the engine overlay.
-COPY --from=fork /fork/examples/features/diffusion_reads/structured_server.py /opt/dgemma/structured_server.py
-COPY --from=fork /fork/examples/features/diffusion_reads/README.md /opt/dgemma/README.md
-COPY server/test_structured_server.py /opt/dgemma/test_structured_server.py
+# The structured server: this repo's copy, which is the fork's example
+# server plus Jev's /v1/systemone contract.
+COPY server/structured_server.py server/test_structured_server.py /opt/dgemma/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && python3 -m py_compile /opt/dgemma/structured_server.py
 

@@ -169,6 +169,46 @@ assert isinstance(out["diagnostics"]["thought"], dict) and out["diagnostics"]["t
 assert d["usage"]["completion_tokens"] == len(THOUGHT) + sum(r["max_tokens"] for r in SEEN[1:])
 print("sequential with one thought ok")
 
+# Jev's contract on /v1/systemone
+def post_s1(body):
+    req = urllib.request.Request("http://127.0.0.1:8999/v1/systemone", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
+    try:
+        r = urllib.request.urlopen(req); return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, json.load(e)
+
+SEEN.clear()
+jev = {"model": "jev-latest", "state": {"ticket": "Everything is down and I am furious"},
+       "questions": {
+           "urgent": {"type": "noul", "instructions": "Does the customer need a reply within the hour?", "criteria": {"true": "needs a reply now", "false": "can wait"}},
+           "bucket": {"type": "choice", "instructions": "Which team owns this?", "criteria": {"billing": None, "outage": "service down", "feature": None}},
+           "tone": {"type": "score", "instructions": "How angry is the customer?", "criteria": ["calm", "annoyed", "furious"]}},
+       "samples": 2}
+code, d = post_s1(jev)
+assert code == 200, d
+assert d["model"] == "dgemma" and list(d["answers"]) == ["urgent", "bucket", "tone"]
+u, b, t = d["answers"]["urgent"], d["answers"]["bucket"], d["answers"]["tone"]
+assert set(u) == {"type", "noul"} and abs(u["noul"] - 0.7) < 1e-6
+assert b["type"] == "choice" and b["choice"] == "billing" and list(b["probabilities"]) == ["billing", "outage", "feature"] and abs(b["confidence"] - 0.7) < 1e-6
+assert t["type"] == "score" and t["legend"] == {"0": "calm", "1": "annoyed", "2": "furious"} and list(t["probabilities"]) == ["0", "1", "2"] and abs(t["score"] - 0.45) < 1e-6
+assert d["usage"]["input_tokens"] > 0 and d["usage"]["output_tokens"] == len(TEMPLATE) + 1
+assert d["diagnostics"]["samples"]["n"] == 2 and len(SEEN) == 2
+sysprompt = SEEN[0]["messages"][0]["content"]
+assert "yes: needs a reply now" in sysprompt and "no: can wait" in sysprompt and "outage (service down)" in sysprompt, sysprompt
+assert SEEN[0]["messages"][1]["content"] == json.dumps(jev["state"])
+code, d = post_s1(dict(jev, state="Everything is down, fix it now", samples=1))
+assert code == 200 and SEEN[-1]["messages"][1]["content"] == "Everything is down, fix it now", "a text state goes through as text"
+for body, want in [
+    (dict(jev, questions={}), "non-empty map"),
+    (dict(jev, questions={"a": {"type": "choice", "instructions": "?", "criteria": ["x", "y"]}}), "map option names"),
+    (dict(jev, questions={"a": {"type": "score", "instructions": "?", "criteria": ["only"]}}), "at least two"),
+    (dict(jev, questions={"a": {"type": "rank", "instructions": "?"}}), "unknown type"),
+    ({"model": "jev-latest", "questions": jev["questions"]}, "state: required"),
+]:
+    code, d = post_s1(body)
+    assert code == 422 and want in d["error"]["message"], (code, d)
+print("systemone ok")
+
 # bad requests
 for body, want in [
     ({"messages": [{"role": "user", "content": "{}"}]}, "exactly two"),

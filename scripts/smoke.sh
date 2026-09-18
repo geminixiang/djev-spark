@@ -20,17 +20,16 @@ d, ms = post(f"http://127.0.0.1:{port}/v1/chat/completions", {
 print(f"  {ms:.0f} ms: {d['choices'][0]['message']['content'].strip()[:120]!r}")
 
 print(f"== structured :{sport}")
-schema = {"questions": [
-    {"id": "urgent", "type": "noul", "instructions": "Does the customer need a reply within the hour?"},
-    {"id": "bucket", "type": "choice", "instructions": "Which team owns this?",
-     "options": [{"name": "billing"}, {"name": "outage", "description": "service down"}, {"name": "feature"}]},
-    {"id": "tone", "type": "score", "instructions": "How angry is the customer?", "levels": ["calm", "annoyed", "furious"]}],
-    "samples": 1}
-state = {"ticket": "Everything is down and we have a demo at noon. Fix it now."}
-d, ms = post(f"http://127.0.0.1:{sport}/v1/chat/completions", {
-    "messages": [{"role": "system", "content": json.dumps(schema)}, {"role": "user", "content": json.dumps(state)}]})
-out = json.loads(d["choices"][0]["message"]["content"])
-for k, a in out["answers"].items():
-    print(f"  {k:7s} {a['label']:3s} confidence {a['confidence']:.2f}")
-print(f"  {ms:.0f} ms, {out['diagnostics']['samples']['n']} read(s)")
+d, ms = post(f"http://127.0.0.1:{sport}/v1/systemone", {
+    "model": "jev-latest",
+    "state": {"ticket": "Everything is down and we have a demo at noon. Fix it now."},
+    "questions": {
+        "urgent": {"type": "noul", "instructions": "Does the customer need a reply within the hour?"},
+        "bucket": {"type": "choice", "instructions": "Which team owns this?",
+                   "criteria": {"billing": None, "outage": "service down", "feature": None}},
+        "tone": {"type": "score", "instructions": "How angry is the customer?", "criteria": ["calm", "annoyed", "furious"]}},
+    "samples": 1})
+for k, a in d["answers"].items():
+    print(f"  {k:7s} {json.dumps({x: y for x, y in a.items() if x != 'type'})}")
+print(f"  {ms:.0f} ms, {d['diagnostics']['samples']['n']} read(s), usage {d['usage']}")
 EOF

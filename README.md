@@ -3,7 +3,8 @@
 DiffusionGemma as Jev, for the Spark: DiffusionGemma 26B-A4B (NVFP4) on a DGX
 Spark, serving structured decisions.
 One container: vLLM with the structured-reads patches on port 8010, the
-structured decision server on port 8011 in front of it.
+structured decision server on port 8011 in front of it. The server speaks
+Jev's `POST /v1/systemone` contract.
 
 The engine patches are [vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250).
 The container builds from branch `structured-reads-spark` of
@@ -29,8 +30,9 @@ which is that PR plus the open dtype-cast fix.
 - `patches/worker_memory_cap.py`, `patches/spark_mem_trace.py`: per-worker
   memory cap, active only when `TORCH_MEM_FRACTION` is set. From
   home-infra `infra/docker/spark/glm53/patches`.
-- The structured server from the fork commit is at
-  `/opt/dgemma/structured_server.py`, its README at `/opt/dgemma/README.md`.
+- `server/structured_server.py`: the structured server, installed at
+  `/opt/dgemma/structured_server.py`. It is the fork's example server plus
+  the `/v1/systemone` route.
 
 To move to a newer engine: rebase the fork branch onto main, set `VLLM_REF`
 to its head, set `BASE` and `VLLM_BASE` to a nightly at or after that
@@ -56,21 +58,42 @@ docker compose logs -f dgemma
 scripts/smoke.sh
 ```
 
-Structured request: two messages, schema JSON as system, state JSON as
-user. Reply content is one distribution per question.
+`POST /v1/systemone` takes Jev's request body and returns Jev's answers.
+No API key. `model` is accepted and ignored.
 
 ```bash
-curl -s localhost:8011/v1/chat/completions -H 'content-type: application/json' -d '{
-  "messages": [
-    {"role": "system", "content": "{\"questions\": [{\"id\": \"urgent\", \"type\": \"noul\", \"instructions\": \"Does the customer need a reply within the hour?\"}]}"},
-    {"role": "user", "content": "{\"ticket\": \"Everything is down and we have a demo at noon.\"}"}
-  ]}'
+curl -s localhost:8011/v1/systemone -H 'content-type: application/json' -d '{
+  "model": "jev-latest",
+  "state": {"ticket": "Everything is down and we have a demo at noon."},
+  "questions": {
+    "urgent": {"type": "noul", "instructions": "Does the customer need a reply within the hour?"},
+    "team": {"type": "choice", "instructions": "Which team owns this?",
+             "criteria": {"billing": null, "outage": "service down", "feature": null}},
+    "tone": {"type": "score", "instructions": "How angry is the customer?",
+             "criteria": ["calm", "annoyed", "furious"]}
+  }}'
 ```
 
-Question types: `noul`, `choice` with `options`, `score` with `levels`.
-Other schema fields: `samples`, `chunk_rows`, `ask`, `sequential`,
-`think`, image parts in the state. Documented at the top of
-`structured_server.py`.
+Request: `state` (string, object or array), `questions` map of id to
+`{type, instructions, criteria}`. `noul` criteria is an optional
+`{"true": ..., "false": ...}`; `choice` criteria maps option names to
+descriptions or null; `score` criteria is an ordered list of levels.
+Response: `model`, `answers` (noul `{"noul": p}`; choice `{"choice",
+"probabilities", "confidence"}`; score `{"score", "legend",
+"probabilities", "confidence"}` with 0-indexed legend), `usage`
+(`input_tokens` by the tokenizer, `output_tokens` = canvas rows plus
+thought tokens), and this server's `diagnostics` (per-read tops, entropies,
+timing, thought). Validation errors are 422.
+
+Extensions, as top-level request keys: `samples` (`"auto"` or N, default
+auto), `auto_max`, `auto_threshold`, `think` (thought budget in tokens),
+`chunk_rows`, `chunk_prompt`, `sequential`, `ask`, `steps`, `instructions`
+(context rendered ahead of the questions), `seed`.
+
+`POST /v1/chat/completions` is the same decision as an OpenAI-shaped call:
+system message = the schema JSON, user message = the state JSON or image
+parts; reply `content` = the answer JSON. Schema documented at the top of
+`server/structured_server.py`.
 
 ## Configuration
 
@@ -164,7 +187,7 @@ Same with `MAX_NUM_BATCHED_TOKENS=32768`: 38,448 tokens 30.18 / 0.23 s;
 ## Files
 
 ```
-Dockerfile                      base + fork overlay + patches + server
+Dockerfile                      base + fork engine overlay + patches + server
 compose.yaml                    one service, host network
 entrypoint.sh                   memory guard, vllm serve, structured server
 .env.example
@@ -177,5 +200,6 @@ scripts/download-model.sh
 scripts/smoke.sh
 scripts/self-test.sh
 scripts/long-context-probe.py
+server/structured_server.py
 server/test_structured_server.py
 ```
