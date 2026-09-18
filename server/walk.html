@@ -54,10 +54,11 @@ const $ = id => document.getElementById(id);
 const QUESTIONS = {
   ahead: {
     type: "choice",
-    instructions: "You are the eyes of a person walking forward. Look at what is directly ahead on their path. "
-      + "Say all clear if there is no obstacle within 5 meters ahead. Otherwise name the nearest hazard.",
+    instructions: "You are the eyes of a person walking forward. Judge only the center of the image, a window "
+      + "about 30 degrees wide directly ahead; ignore everything to the sides. Say all clear if there is no obstacle "
+      + "within 2 meters in that window. Otherwise name the nearest hazard in it.",
     criteria: {
-      "all clear ahead": "the path ahead is free for at least 5 meters",
+      "all clear ahead": "the path straight ahead is free for at least 2 meters",
       "danger: stairs": "stairs, steps or a curb ahead, up or down",
       "danger: wall ahead": "a wall, fence or closed barrier ahead",
       "danger: object ahead": "furniture, a pole, a parked bike, a box or another object in the path",
@@ -66,7 +67,7 @@ const QUESTIONS = {
     }
   }
 };
-const STATE = {note: "one frame from a phone's back camera, pointed the way the person is walking"};
+const STATE = {note: "one frame from a phone's back camera, pointed the way the person is walking; only the center 30 degrees matters"};
 
 let stream = null, running = false, lastLabel = "", inflight = false;
 try { $("key").value = localStorage.getItem("djev_api_key") || ""; } catch (e) {}

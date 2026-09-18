@@ -173,8 +173,9 @@ phone page: it streams the back camera, sends a 512px frame per round trip
 as one choice question, and shows the label full width under the video
 with the probabilities below, no scrolling. Labels: all clear ahead,
 danger: stairs, danger: wall ahead, danger: object ahead, danger: pet
-ahead, door ahead. The instructions tell the model to say all clear when
-nothing is within 5 meters. A changed label is spoken aloud when "speak"
+ahead, door ahead. The instructions tell the model to judge only a 30
+degree window at the center of the frame and to say all clear when
+nothing is within 2 meters there. A changed label is spoken aloud when "speak"
 is on. Each frame is one image decision, about 320 ms on the Spark plus
 the upload.
 
