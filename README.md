@@ -157,6 +157,14 @@ Static image tests:
 
 ![playground with image](docs/triangle.png)
 
+### Other routes
+
+| route | what it does |
+|---|---|
+| `POST /v1/chat/completions` | The same decision as an OpenAI-shaped call: system message = the schema JSON, user message = the state JSON or image parts; reply `content` = the answer JSON. Schema documented at the top of `server/structured_server.py`. |
+| `POST /v1/raw/chat/completions` | Passes the body to vLLM's chat completions unchanged: plain generation through the same port and, with `API_KEY`, the same token. |
+| `GET /health` | Always open, no token. |
+
 ## Configuration
 
 Environment variables, same defaults in `compose.yaml` and `.env.example`.
