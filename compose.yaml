@@ -1,0 +1,47 @@
+# One container: vLLM on :8010 with the structured-reads overlay, and the
+# structured decision server on :8011 in front of it. Host network, so the
+# ports are the host's.
+#
+# The entrypoint refuses to start without memory headroom. Run this next to
+# nothing else large on the box: DiffusionGemma NVFP4 holds about 19 GB of
+# weights plus the sampler's start-up transient, and on unified memory an
+# overshoot hangs the host rather than failing a request.
+services:
+  dgemma:
+    build: .
+    image: dgemma-spark:latest
+    container_name: dgemma
+    network_mode: host
+    runtime: nvidia
+    ipc: host
+    restart: unless-stopped
+    ulimits:
+      core: 0
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+      # FlashInfer's JIT output and torch's compile cache. First start builds
+      # for several minutes; every later start reuses this.
+      - ${CACHE_DIR:-./cache}:/root/.cache
+    environment:
+      - MODEL=/models/dgemma
+      - SERVED_NAME=${SERVED_NAME:-dgemma}
+      - CANVAS=${CANVAS:-128}
+      - MAX_SEQS=${MAX_SEQS:-32}
+      - MAX_MODEL_LEN=${MAX_MODEL_LEN:-4096}
+      - GPU_UTIL=${GPU_UTIL:-0.40}
+      - ATTN=${ATTN:-TRITON_ATTN}
+      - PORT=${PORT:-8010}
+      - STRUCTURED_PORT=${STRUCTURED_PORT:-8011}
+      - EXTRA_ARGS=${EXTRA_ARGS:---async-scheduling}
+      - HEADROOM_GB=${HEADROOM_GB:-12}
+      # Empty leaves the worker unbounded, as upstream. A fraction turns a
+      # runaway allocation into a failed request instead of a hung host.
+      - TORCH_MEM_FRACTION=${TORCH_MEM_FRACTION:-}
+      - VLLM_USE_V2_MODEL_RUNNER=1
+      - VLLM_PORT=5300
+      # FlashInfer's JIT runs one compiler per unit by default and a single
+      # cicc can pass 8 GB; bounded so the first start cannot OOM the box.
+      - MAX_JOBS=${MAX_JOBS:-4}
+      - FLASHINFER_NVCC_THREADS=${FLASHINFER_NVCC_THREADS:-2}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility

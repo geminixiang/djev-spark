@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Fetch the NVFP4 checkpoint into ${MODELS_DIR:-./models}/dgemma. Uses a host
+# `hf` when there is one, otherwise the one inside the built image.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+REPO=${MODEL_REPO:-nvidia/diffusiongemma-26B-A4B-it-NVFP4}
+MODELS_DIR=${MODELS_DIR:-./models}
+mkdir -p "$MODELS_DIR/dgemma"
+DEST=$(cd "$MODELS_DIR" && pwd)
+
+if command -v hf >/dev/null 2>&1; then
+  hf download "$REPO" --local-dir "$DEST/dgemma"
+else
+  docker compose build -q dgemma
+  docker run --rm -v "$DEST:/models" -e HF_TOKEN="${HF_TOKEN:-}" \
+    --entrypoint hf dgemma-spark:latest download "$REPO" --local-dir /models/dgemma
+fi
+echo "model at $DEST/dgemma"
+ls "$DEST/dgemma" | head
