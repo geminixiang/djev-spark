@@ -63,13 +63,24 @@ done
 healthy "$PORT" || { echo "vllm not healthy after ${WAIT_SECS}s" >&2; kill "$VLLM_PID"; exit 1; }
 echo "vllm ready on :${PORT}"
 
-python3 /opt/dgemma/structured_server.py --upstream "http://127.0.0.1:${PORT}" --model "$SERVED_NAME" \
-  --tokenizer "$MODEL" --canvas "$CANVAS" --port "$STRUCTURED_PORT" --tls-port "$TLS_PORT" --cert-dir /root/.cache/djev &
-SERVER_PID=$!
+# The structured server is restarted whenever it exits, so its code can be
+# reloaded (docker cp the files in, then pkill -f structured_server.py)
+# without touching vLLM. Only vLLM's exit ends the container.
+serve_structured() {
+  while kill -0 "$VLLM_PID" 2>/dev/null; do
+    python3 /opt/dgemma/structured_server.py --upstream "http://127.0.0.1:${PORT}" --model "$SERVED_NAME" \
+      --tokenizer "$MODEL" --canvas "$CANVAS" --port "$STRUCTURED_PORT" --tls-port "$TLS_PORT" --cert-dir /root/.cache/djev
+    echo "structured server exited; restarting" >&2
+    sleep 1
+  done
+}
+serve_structured &
+SERVER_LOOP=$!
 
-trap 'kill "$VLLM_PID" "$SERVER_PID" 2>/dev/null; wait' TERM INT
-wait -n "$VLLM_PID" "$SERVER_PID"
-echo "a process exited; stopping the other" >&2
-kill "$VLLM_PID" "$SERVER_PID" 2>/dev/null
+trap 'kill "$VLLM_PID" "$SERVER_LOOP" 2>/dev/null; pkill -f structured_server.py 2>/dev/null; wait' TERM INT
+wait "$VLLM_PID"
+echo "vllm exited; stopping" >&2
+kill "$SERVER_LOOP" 2>/dev/null
+pkill -f structured_server.py 2>/dev/null
 wait
 exit 1

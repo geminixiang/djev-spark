@@ -17,6 +17,12 @@ class Fake(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(int(self.headers["content-length"])))
         req["_path"] = self.path
         SEEN.append(req)
+        if "vllm_xargs" not in req and self.path.endswith("/v1/chat/completions") and "stop_token_ids" in req:
+            # a thought written through the chat endpoint (image states)
+            toks = [{"token": f"token_id:{i}", "logprob": -0.1} for i in S.THOUGHT_OPEN + THOUGHT + S.THOUGHT_CLOSE][:req["max_tokens"]]
+            body = json.dumps({"choices": [{"message": {"content": ""}, "logprobs": {"content": toks}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 400}}).encode()
+            self.send_response(200); self.send_header("content-type", "application/json"); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            return
         if "vllm_xargs" not in req and self.path.endswith("/v1/chat/completions"):
             # a raw chat completion passed through
             body = json.dumps({"choices": [{"message": {"role": "assistant", "content": "raw reply"}}], "usage": {"prompt_tokens": 5}}).encode()
@@ -246,8 +252,22 @@ code, d = post_s1(dict(one, images=[PNG_URL, {"content_type": "image/png", "base
 assert code == 200 and SEEN[-1]["messages"][1]["content"][:2] == [{"type": "image_url", "image_url": {"url": PNG_URL}}] * 2, d
 code, d = post_s1(dict(one, images=["not an image"]))
 assert code == 422 and "images[0]" in d["error"]["message"], d
-code, d = post_s1(dict(one, images=[PNG_URL], think=8))
-assert code == 422 and "text state" in d["error"]["message"], d
+# a thought with an image: written through the chat endpoint, seeded into the canvas
+SEEN.clear()
+code, d = post_s1(dict(one, images=[PNG_URL], think=64))
+assert code == 200, d
+gen, read = SEEN[0], SEEN[1]
+assert gen["_path"].endswith("/v1/chat/completions") and gen["stop_token_ids"] == S.THOUGHT_CLOSE and gen["chat_template_kwargs"] == {"enable_thinking": True}
+assert gen["messages"][1]["content"][0]["type"] == "image_url", "the thought sees the image"
+canvas = read["vllm_xargs"]["diffusion_seed_canvas"]
+assert canvas[: len(S.THOUGHT_OPEN) + len(THOUGHT) + 1] == S.THOUGHT_OPEN + THOUGHT + S.THOUGHT_CLOSE, "the read's canvas starts with the thought"
+assert read["chat_template_kwargs"] == {"enable_thinking": True} and read["messages"][1]["content"][0]["type"] == "image_url"
+th = d["diagnostics"]["thought"]
+assert th["tokens"] == len(THOUGHT) and th["closed"] and th["budget"] <= 64 and d["answers"]["urgent"]["noul"] > 0.5, th
+code, d = post_s1(dict(one, images=[PNG_URL], think=4096))
+assert code == 200 and d["diagnostics"]["thought"]["budget"] < 4096, "the canvas bounds the thought"
+code, d = post_s1(dict(one, images=[PNG_URL], think=8, sequential=True, chunk_rows=8))
+assert code == 422, d
 code, d = post_mp([("request", None, "application/json", b"{}"), ("notes", "n.txt", "text/plain", b"hi")])
 assert code == 400 and "neither" in d["error"]["message"], d
 print("images ok")
@@ -308,7 +328,6 @@ for body, want in [
     ({"messages": [{"role": "system", "content": json.dumps({"questions": [{"id": "a", "type": "noul"}] * 2})}, {"role": "user", "content": "{}"}]}, "duplicate"),
     ({"messages": [{"role": "system", "content": json.dumps({"questions": [{"id": "q" * 300, "type": "noul"}]})}, {"role": "user", "content": "{}"}]}, "canvas holds"),
     ({"messages": [{"role": "system", "content": json.dumps(dict(SCHEMA, think="lots"))}, {"role": "user", "content": "{}"}]}, "think must be"),
-    ({"messages": [{"role": "system", "content": json.dumps(dict(SCHEMA, think=8))}, {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:,"}}]}]}, "think needs a text state"),
 ]:
     code, d = post(body)
     assert code == 400 and want in d["error"]["message"], (code, d)

@@ -38,6 +38,7 @@
   <div class="row">
     <button id="toggle">Start</button>
     <label class="small"><input id="speak" type="checkbox" checked> speak</label>
+    <label class="small"><input id="think" type="checkbox"> think (64 tokens)</label>
     <span id="meta" class="muted"></span>
   </div>
   <div id="bars"></div>
@@ -96,12 +97,12 @@ function say(text) {
   speechSynthesis.cancel();
   speechSynthesis.speak(new SpeechSynthesisUtterance(text.replace("danger:", "danger,")));
 }
-function show(answer, ms) {
+function show(answer, ms, thought) {
   const label = answer.choice, conf = answer.confidence;
   const b = $("banner");
   b.textContent = label;
   b.className = label.startsWith("danger") ? "danger" : label.startsWith("door") ? "door" : "clear";
-  $("meta").textContent = Math.round(conf * 100) + "% · " + ms + " ms";
+  $("meta").textContent = Math.round(conf * 100) + "% · " + ms + " ms" + (thought ? " · thought " + thought.tokens + " tok" : "");
   const bars = $("bars"); bars.innerHTML = "";
   for (const [name, p] of Object.entries(answer.probabilities).sort((a, b2) => b2[1] - a[1])) {
     bars.insertAdjacentHTML("beforeend", `<span>${name}</span><span class="bar"><i style="width:${Math.round(p * 100)}%"></i></span><span class="muted">${Math.round(p * 100)}%</span>`);
@@ -113,7 +114,9 @@ async function step() {
   inflight = true;
   const blob = await frame();
   const fd = new FormData();
-  fd.append("request", JSON.stringify({model: "jev-latest", state: STATE, samples: 1, questions: QUESTIONS}));
+  const req = {model: "jev-latest", state: STATE, samples: 1, questions: QUESTIONS};
+  if ($("think").checked) req.think = 64;
+  fd.append("request", JSON.stringify(req));
   fd.append("frame", blob, "frame.jpg");
   const headers = {}; const k = $("key").value.trim(); if (k) headers["authorization"] = "Bearer " + k;
   const t0 = performance.now();
@@ -121,7 +124,7 @@ async function step() {
     const resp = await fetch("/v1/systemone", {method: "POST", headers, body: fd});
     const d = await resp.json();
     if (!resp.ok) throw new Error((d.error && d.error.message) || resp.status);
-    show(d.answers.ahead, Math.round(performance.now() - t0));
+    show(d.answers.ahead, Math.round(performance.now() - t0), d.diagnostics && d.diagnostics.thought);
     $("status").textContent = "";
   } catch (e) {
     $("status").textContent = "error: " + e.message;

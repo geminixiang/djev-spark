@@ -53,7 +53,9 @@ that run together, each with its own question list ("chunk_rows" sets the
 rows per chunk, "ask" picks a subset of question ids for one read).
 "think": N first lets the model write up to N tokens in its thought
 channel, as an ordinary generation, and the read then runs with that
-thought in its prompt. The noise draws of a decision share one thought.
+thought in its prompt. With images the thought is written with the image
+in view and seeded into the canvas ahead of the answer, so the canvas
+bounds it. The noise draws of a decision share one thought.
 
 Serve the model with a canvas that holds the answer template, for example:
   vllm serve google/diffusiongemma-26B-A4B-it \
@@ -317,7 +319,33 @@ def think(sys_text, state_text, budget):
     return prompt + ids + THOUGHT_CLOSE, info
 
 
-def one_read(schema, template, slots, sys_text, state_content, seed, prefix=None):
+def think_chat(sys_text, state_content, budget):
+    """A thought written with the image in view: the chat endpoint with
+    thinking on, capped at ``budget`` tokens and cut at the close tag.
+    Returns the thought's token ids and a diagnostics dict."""
+    body = {
+        "model": ARGS.model,
+        "messages": [{"role": "system", "content": sys_text}, {"role": "user", "content": state_content}],
+        "max_tokens": budget,
+        "logprobs": True,
+        "top_logprobs": 0,
+        "return_tokens_as_token_ids": True,
+        "stop_token_ids": THOUGHT_CLOSE,
+        "chat_template_kwargs": {"enable_thinking": True},
+    }
+    started = time.time()
+    d = upstream_chat(body)
+    choice = d["choices"][0]
+    ids = [int(t["token"].split(":")[1]) for t in (choice.get("logprobs") or {}).get("content") or []]
+    if ids[: len(THOUGHT_OPEN)] == THOUGHT_OPEN:  # the model opens the channel itself
+        ids = ids[len(THOUGHT_OPEN):]
+    closed = THOUGHT_CLOSE[0] in ids
+    if closed:
+        ids = ids[: ids.index(THOUGHT_CLOSE[0])]
+    return ids, {"tokens": len(ids), "closed": closed, "ms": (time.time() - started) * 1e3, "text": TOK.decode(ids)}
+
+
+def one_read(schema, template, slots, sys_text, state_content, seed, prefix=None, thinking=False):
     if prefix is not None:
         return one_read_continuation(schema, template, slots, prefix, seed)
     messages = [{"role": "system", "content": sys_text}, {"role": "user", "content": state_content}]
@@ -332,7 +360,7 @@ def one_read(schema, template, slots, sys_text, state_content, seed, prefix=None
         # mass sits on tokens that spell the option name instead.
         "logprob_token_ids": label_id_union(slots),
         "return_tokens_as_token_ids": True,
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": thinking},
         "vllm_xargs": {"diffusion_seed_canvas": build_canvas(template, slots, seed), "diffusion_canvas_length": canvas_width(template),
                        "diffusion_max_steps": schema["steps"], "diffusion_read_only": True},
     }
@@ -386,14 +414,14 @@ def one_read_continuation(schema, template, slots, prompt_ids, seed):
     return out, d.get("usage", {})
 
 
-def read_many(schema, template, slots, sys_text, state_content, seed, n, prefix=None):
+def read_many(schema, template, slots, sys_text, state_content, seed, n, prefix=None, thinking=False):
     results = [None] * n
     errors = [None] * n
     usages = [None] * n
 
     def run(k):
         try:
-            results[k], usages[k] = one_read(schema, template, slots, sys_text, state_content, seed + k * 7919, prefix)
+            results[k], usages[k] = one_read(schema, template, slots, sys_text, state_content, seed + k * 7919, prefix, thinking)
         except Exception as e:  # surfaced as one failed request below
             errors[k] = e
 
@@ -507,22 +535,36 @@ def decide(schema, state_content, seed):
 def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
     started = time.time()
     thought = None
+    head = SCAFFOLD if prefix is None else []
+    thinking = False
     if prefix is None and schema["think"]:
-        if not isinstance(state_content, str):
-            raise SchemaError("think needs a text state (images go through the chat endpoint)")
-        prefix, thought = think(sys_text, state_content, schema["think"])
-    template, slots = template_for(schema, SCAFFOLD if prefix is None else [], lead)
+        if isinstance(state_content, str):
+            prefix, thought = think(sys_text, state_content, schema["think"])
+            head = []
+        else:
+            # With images the thought is written with the image in view and
+            # seeded into the canvas ahead of the answer, so the read keeps
+            # the image. The canvas bounds the thought.
+            answer = enc(answer_text(schema["questions"], [0] * len(schema["questions"]), schema.get("format", "lines")))
+            fits = CANVAS_LEN - 1 - len(THOUGHT_OPEN) - len(THOUGHT_CLOSE) - len(answer)
+            if fits < 8:
+                raise SchemaError(f"think: the canvas leaves {fits} rows for a thought beside this template")
+            ids, thought = think_chat(sys_text, state_content, min(schema["think"], fits))
+            thought["budget"] = min(schema["think"], fits)
+            head = THOUGHT_OPEN + ids + THOUGHT_CLOSE
+            thinking = True
+    template, slots = template_for(schema, head, lead)
     policy = schema["policy"]
     if policy["mode"] == "fixed":
-        reads, usages = read_many(schema, template, slots, sys_text, state_content, seed, policy["n"], prefix)
+        reads, usages = read_many(schema, template, slots, sys_text, state_content, seed, policy["n"], prefix, thinking)
         extended = None
         first_entropy = None
     else:
-        reads, usages = read_many(schema, template, slots, sys_text, state_content, seed, 1, prefix)
+        reads, usages = read_many(schema, template, slots, sys_text, state_content, seed, 1, prefix, thinking)
         first_entropy = {q["id"]: r["entropy"] for q, r in zip(schema["questions"], reads[0])}
         extended = max(first_entropy.values()) > policy["threshold"] and policy["max"] > 1
         if extended:
-            more, more_usages = read_many(schema, template, slots, sys_text, state_content, seed + 1, policy["max"] - 1, prefix)
+            more, more_usages = read_many(schema, template, slots, sys_text, state_content, seed + 1, policy["max"] - 1, prefix, thinking)
             reads += more
             usages += more_usages
     prompt_tokens = next((u["prompt_tokens"] for u in usages if u and u.get("prompt_tokens")), None)

@@ -177,7 +177,17 @@ ahead, door ahead. The instructions tell the model to judge only a 30
 degree window at the center of the frame and to say all clear when
 nothing is within 2 meters there. A changed label is spoken aloud when "speak"
 is on. Each frame is one image decision, about 320 ms on the Spark plus
-the upload.
+the upload. The "think" box adds a 64-token thought per frame, written
+with the frame in view and seeded into the read's canvas ahead of the
+answer; the canvas bounds the thought, so at 128 rows a request for more
+is clipped and `diagnostics.thought.budget` says to what.
+
+To reload the server code without restarting vLLM: copy the files into
+the container and kill the server process; the entrypoint restarts it.
+
+```bash
+docker cp server/. dgemma:/opt/dgemma/ && docker exec dgemma pkill -f structured_server.py
+```
 
 ### Other routes
 
