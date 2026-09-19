@@ -16,11 +16,11 @@
   #banner.clear { background: var(--clear); }
   #banner.danger { background: var(--danger); }
   #banner.door { background: var(--door); }
-  /* Always in the layout; only its visibility changes, so nothing moves. */
+  /* Always in the layout. Only its visibility changes, so nothing moves. */
   #arrow { position: absolute; top: 10px; right: 12px; width: 84px; height: 84px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 60px; line-height: 84px; text-align: center; font-weight: 700; visibility: hidden; }
   #arrow.turn { background: rgba(179,38,30,.85); visibility: visible; }
   #arrow.ahead { background: rgba(31,143,58,.85); visibility: visible; }
-  /* Its own line, always present, one line tall, so text length never reflows anything. */
+  /* Its own line, always present, one line tall, so text length never reflows the layout. */
   #meta, #status { display: block; height: 1.3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #panel { padding: 10px 14px 12px; display: grid; gap: 8px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -56,9 +56,9 @@
 <canvas id="canvas"></canvas>
 <script>
 const $ = id => document.getElementById(id);
-// What the model is asked every frame. The hazard is one choice on its own:
-// a direction question in the same read drags the hazard slot toward
-// obstacles (measured: all clear fell from 0.8 to 0.04 on a clear frame).
+// What the model is asked every frame. The hazard is one choice on its own,
+// because a direction question in the same read biases the hazard slot toward
+// obstacles: all clear fell from 0.8 to 0.04 on a clear frame.
 // The side of the obstacle is a second stage the server runs only when the
 // hazard is a danger (ask_if), with the hazard restated in its prompt.
 const DANGER = ["danger: stairs", "danger: wall ahead", "danger: object ahead", "danger: pet ahead"];
@@ -77,10 +77,10 @@ const QUESTIONS = {
       "door ahead": "a door directly ahead, open or closed"
     }
   },
-  // Asked as perception, not as a turn: "which side is more open" biased
-  // right whatever the frame showed (p(left) 0.03 to 0.25 with the obstacle
-  // on either side), while "which half is the obstacle in" was right at
-  // 0.95 to 1.00 on the same frames. The arrow points the other way.
+  // Asked as perception. "which side is more open" biased right whatever
+  // the frame showed (p(left) 0.03 to 0.25 with the obstacle on either side),
+  // while "which half is the obstacle in" was right at 0.95 to 1.00 on the
+  // same frames. The arrow points the other way.
   side: {
     type: "choice",
     instructions: "There is an obstacle ahead. Where is the nearest obstacle, stairs, wall or obstruction in the frame?",
@@ -100,7 +100,7 @@ async function startCam() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: "environment"}, width: {ideal: 640}, height: {ideal: 480}}, audio: false});
   } catch (e) {
-    $("status").textContent = "camera: " + e.message + (location.protocol === "http:" && location.hostname !== "localhost" ? " (webcam needs https; use the TLS port)" : "");
+    $("status").textContent = "camera: " + e.message + (location.protocol === "http:" && location.hostname !== "localhost" ? " (the webcam needs https, so use the TLS port)" : "");
     return false;
   }
   $("video").srcObject = stream;
@@ -132,8 +132,8 @@ function show(answer, ms, thought) {
     row.pct.textContent = Math.round(p * 100) + "%";
   }
 }
-// The rows exist from the start, in a fixed order, so answers change widths
-// and nothing else.
+// The rows exist from the start, in a fixed order, so an answer changes
+// only the bar widths.
 const BAR_ROWS = {};
 for (const name of Object.keys(QUESTIONS.ahead.criteria)) {
   $("bars").insertAdjacentHTML("beforeend", `<span>${name}</span><span class="bar"><i style="width:0%"></i></span><span class="muted">0%</span>`);
@@ -156,7 +156,7 @@ async function step() {
   const blob = await frame();
   const req = {model: "jev-latest", state: STATE, samples: 1, questions: QUESTIONS};
   if ($("think").checked) {
-    // The model tends to restate the task first; point the short budget at the scene.
+    // The model tends to restate the task first, so this points the short budget at the scene.
     req.think = 64;
     req.instructions = "Before answering, think in one short sentence about what is within 2 meters straight ahead. Do not restate the question.";
   }

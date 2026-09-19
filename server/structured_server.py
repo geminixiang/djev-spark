@@ -2,38 +2,41 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Structured decisions in front of a vLLM DiffusionGemma server.
 
-POST /v1/systemone takes Jev's request: {"model", "state", "questions"} with
-questions a map of id -> {"type": "noul" | "choice" | "score",
-"instructions", "criteria"} (noul: optional {"true", "false"} descriptions;
-choice: option name -> description or null; score: ordered list of levels)
-and answers in Jev's shape: noul {"noul": p}, choice {"choice",
-"probabilities", "confidence"}, score {"score", "legend", "probabilities",
-"confidence"}, with this server's diagnostics alongside. The schema keys
-below may be added to the request body as extensions ("samples", "think",
-"chunk_rows", "sequential", "ask", "steps", "instructions"). Images go
-ahead of the state: as multipart/form-data with the JSON body in a part
-named "request" and each image as a file part, or as an "images" array of
-data URLs in the JSON body.
+POST /v1/systemone takes Jev's request body: {"model", "state", "questions"}.
+"questions" maps an id to {"type", "instructions", "criteria"}, where "type"
+is "noul", "choice" or "score" and the criteria shape follows the type:
+  noul:   optional {"true": ..., "false": ...} descriptions
+  choice: option name -> description or null
+  score:  ordered list of levels
+Answers take Jev's shapes, with this server's diagnostics alongside:
+  noul:   {"noul": p}
+  choice: {"choice", "probabilities", "confidence"}
+  score:  {"score", "legend", "probabilities", "confidence"}
+The request body may also carry the schema keys "instructions", "samples",
+"auto_max", "auto_threshold", "steps", "think", "ask", "chunk_rows",
+"chunk_prompt" and "sequential" as extensions. Images go ahead of the
+state, either as multipart/form-data with the JSON body in a part named
+"request" and each image as a file part, or as an "images" array of data
+URLs in the JSON body.
 
-POST /v1/chat/completions is the same decision as an OpenAI-shaped call: a
-system message that is the schema JSON below and a user message that is
-the state; the reply's `content` is the JSON answer set.
+POST /v1/chat/completions makes the same decision from an OpenAI-shaped
+call. The system message is the schema JSON below and the user message is
+the state. The reply's `content` is the JSON answer set.
 
 POST /v1/raw/chat/completions passes the body to vLLM's chat completions
 unchanged, for plain generation through this port.
 
 With API_KEY set in the environment, every POST needs "Authorization:
-Bearer <key>". With TEST_PAGE=1, GET / serves playground.html: a form for
-the request JSON with an image file or webcam frames attached, and GET
-/walk serves walk.html, a phone page that streams the back camera and
-reads one hazard label per frame. Browsers only open the webcam on a
-secure origin, so --tls-port adds an HTTPS listener with a self-signed
-certificate kept in --cert-dir.
+Bearer <key>". With TEST_PAGE=1, GET / serves playground.html, a form for
+the request JSON with an image file or webcam frames attached, GET /walk
+serves walk.html, a phone page that streams the back camera and reads one
+hazard label per frame, and GET /cube serves cube.html, the Cube Rule
+demo. Browsers open the webcam only on a secure origin, so --tls-port adds
+an HTTPS listener with a self-signed certificate kept in --cert-dir.
 
-Each answer is one calibrated distribution per question, from a single
-denoise step over a seeded canvas, averaged over a few noise draws. The
-canvas, tokenizer, slot resolution, noise draws and averaging stay behind
-this server.
+Each answer is one distribution per question, from one denoise step over a
+seeded canvas, averaged over a few noise draws. This server handles the
+canvas, tokenizer, slot resolution, noise draws and averaging.
 
 Schema (system message):
   {"questions": [
@@ -46,23 +49,29 @@ Schema (system message):
    "samples": "auto" | N, "auto_threshold": 0.1, "auto_max": 4,
    "steps": 1, "think": 0}
 
-A question may declare "depends_on": [ids] to be answered after those,
-with their answers in its prompt; "ask_if": {id: [answers]} to be asked
-only when that question's answer is among them (skipped answers are
-null); and "alone": true for a read of its own. Questions run in stages
-by these dependencies, each stage one joint read, later stages continuing
-the earlier answers (prefilled for a text state, restated for an image).
+A question may also declare:
+  "depends_on": [ids]        answered after those, with their answers in
+                             its prompt
+  "ask_if": {id: [answers]}  asked only when that question's answer is
+                             among them (a skipped answer is null)
+  "alone": true              a read of its own
+Questions run in stages by these dependencies. Each stage is one joint
+read. Later stages continue the earlier answers, prefilled for a text
+state and restated for an image.
 
 Up to ten questions answer as "id: label" lines. Past that the id runs
-straight into the label, space separated, at one row fewer a question. A
-schema whose answer template does not fit the canvas is split into chunks
-that run together, each with its own question list ("chunk_rows" sets the
-rows per chunk, "ask" picks a subset of question ids for one read).
-"think": N first lets the model write up to N tokens in its thought
-channel, as an ordinary generation, and the read then runs with that
-thought in its prompt. With images the thought is written with the image
-in view and seeded into the canvas ahead of the answer, so the canvas
-bounds it. The noise draws of a decision share one thought.
+straight into the label, space separated, one row fewer per question. The
+server splits a schema whose answer template does not fit the canvas into
+chunks that run together, each with its own question list. "chunk_rows"
+sets the rows per chunk, "ask" picks a subset of question ids for one
+read, "sequential": true runs the chunks in order with the earlier answers
+prefilled, and "chunk_prompt": "shared" lists every question in each
+chunk's prompt. "think": N lets the model write up to N tokens in its
+thought channel, as an ordinary generation, and the read then runs with
+that thought in its prompt. With images the model writes the thought with
+the image in view and the server seeds it into the canvas ahead of the
+answer, so the canvas bounds it. The noise draws of a decision share one
+thought.
 
 Serve the model with a canvas that holds the answer template, for example:
   vllm serve google/diffusiongemma-26B-A4B-it \
@@ -87,7 +96,7 @@ PAGES = {  # served with TEST_PAGE=1
     "/walk": "walk.html",
     "/cube": "cube.html",
 }
-CANVAS_LEN = 64      # the served canvas; a request may run narrower
+CANVAS_LEN = 64      # the served canvas length. A request may be narrower.
 CANVAS_STEP = 16     # request widths are multiples of this
 VOCAB = 262144
 TURN_CLOSE = 106
@@ -187,12 +196,12 @@ def parse_schema(value):
 
 
 # Answer template shape: (join between questions, what precedes the label,
-# reply instruction). "lines" is readable and is what a small schema gets.
+# reply instruction). A small schema gets "lines", which is readable.
 # "indexed" ("0yes 1no") costs three tokens a question against four or five
-# and agreed with lines on every set measured: 42 booleans, ten 26-way
-# choices, twenty 5-level scores. Past ten questions the saved rows are what
-# keep a schema in one read. Two tokens a question, or no id at all, loses
-# alignment beyond about twenty questions: the id is what ties a label to
+# and agreed with "lines" on every set tried: 42 booleans, ten 26-way
+# choices, twenty 5-level scores. Past ten questions the saved rows keep a
+# schema in one read. Two tokens a question, or no id at all, loses
+# alignment beyond about twenty questions, because the id ties a label to
 # its question.
 FORMATS = {
     "lines": ("\n", "{id}: ", 'Reply with one line per question, in this order, formatted as "id: label".'),
@@ -241,8 +250,8 @@ def init_tokenizer(tok):
 def resolve_template(qs, head, lead, fmt):
     """Tokenize the answer template and find each question's slot. Every label
     must change exactly one token, at the same position for all of a question's
-    labels, or the schema is refused. ``head`` is the token run the canvas
-    starts with: the empty thought block for a plain read, nothing when the
+    labels, or this raises SchemaError. ``head`` is the token run the canvas
+    starts with: the empty thought block for a plain read, and empty when the
     prompt already ends the thought channel. ``lead`` is the text before the
     first answer: the join when earlier answers are in the prompt, so the
     tokens match one joint template."""
@@ -306,7 +315,7 @@ def build_canvas(template, slots, seed):
 
 def label_id_union(slots):
     ids = sorted({i for s in slots for i in s["label_ids"]})
-    return ids[:128]  # vLLM's cap per request; a schema needs far fewer
+    return ids[:128]  # vLLM's cap per request. A schema needs far fewer.
 
 
 def upstream_chat(body, timeout=600):
@@ -332,9 +341,9 @@ def chat_prompt_ids(sys_text, state_text, thinking=False):
 
 
 def think(sys_text, state_text, budget):
-    """A read prefix that ends a thought the model wrote: the chat prompt with
-    thinking on, the open tag, up to ``budget`` generated tokens, the close
-    tag. Returns the prefix and a diagnostics dict for the thought."""
+    """A read prefix that ends with a thought the model wrote: the chat prompt
+    with thinking on, the open tag, up to ``budget`` generated tokens, the
+    close tag. Returns the prefix and a diagnostics dict for the thought."""
     prompt = chat_prompt_ids(sys_text, state_text, thinking=True) + THOUGHT_OPEN
     started = time.time()
     d = upstream_completions({"model": ARGS.model, "prompt": prompt, "max_tokens": budget, "logprobs": 0,
@@ -450,7 +459,7 @@ def read_many(schema, template, slots, sys_text, state_content, seed, n, prefix=
     def run(k):
         try:
             results[k], usages[k] = one_read(schema, template, slots, sys_text, state_content, seed + k * 7919, prefix, thinking)
-        except Exception as e:  # surfaced as one failed request below
+        except Exception as e:  # raised again below
             errors[k] = e
 
     threads = [threading.Thread(target=run, args=(k,)) for k in range(n)]
@@ -483,7 +492,7 @@ def schedule(qs):
 
 def chunk_groups(schema, qs):
     """``qs`` split, in order, into the fewest groups whose answer templates
-    fit ``chunk_rows`` (the canvas by default); a question marked alone gets
+    fit ``chunk_rows`` (the canvas by default). A question marked alone gets
     its own group."""
     limit = schema.get("chunk_rows") or CANVAS_LEN
     groups, group = [], []
@@ -515,12 +524,12 @@ def answer_name(q, a):
 
 
 def decide(schema, state_content, seed):
-    """One decision. Questions run in stages by their dependencies; a stage
-    is one joint read (chunked by the canvas, a question marked alone in its
-    own read) and later stages condition on every earlier answer: as a
-    prefilled continuation for a text state, restated in the state for an
-    image one. ask_if skips a question whose condition failed; its answer is
-    null."""
+    """One decision. Questions run in stages by their dependencies. A stage
+    is one joint read, chunked by the canvas, with a question marked alone
+    in its own read. Later stages condition on every earlier answer: a
+    prefilled continuation for a text state, or the answers restated in the
+    state for an image. A question whose ask_if condition failed is skipped
+    and its answer is null."""
     started = time.time()
     qs = [q for q in schema["questions"] if not schema.get("ask") or q["id"] in schema["ask"]]
     levels = schedule(qs)
@@ -544,8 +553,8 @@ def decide(schema, state_content, seed):
 
     def run(group, k, conditioned):
         sub = dict(schema, questions=group)
-        # A thought is written once: it rides in the prefix of a chained text
-        # decision, or in the first read of anything else.
+        # The thought is written once: in the prefix of a chained text decision,
+        # or in the first read of anything else.
         sub["think"] = 0 if (chained and text_state) or conditioned else schema["think"]
         if text_state:
             if conditioned:
@@ -603,8 +612,8 @@ def decide(schema, state_content, seed):
     diag_q = {}
     for body, _ in parts:
         diag_q.update(body["diagnostics"]["questions"])
-    # A thought written here (chained text decision) is not in any group's
-    # row count; one written inside a group already is.
+    # A thought written here (a chained text decision) is outside every
+    # group's row count. One written inside a group is already counted there.
     extra_rows = thought["tokens"] if thought else 0
     if thought is None:
         thoughts = [b["diagnostics"].get("thought") for b, _ in parts]
@@ -642,9 +651,9 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
             prefix, thought = think(sys_text, state_content, schema["think"])
             head = []
         else:
-            # With images the thought is written with the image in view and
-            # seeded into the canvas ahead of the answer, so the read keeps
-            # the image. The canvas bounds the thought.
+            # With images the model writes the thought with the image in view, and
+            # the server seeds it into the canvas ahead of the answer, so the read
+            # keeps the image. The canvas bounds the thought.
             answer = enc(answer_text(schema["questions"], [0] * len(schema["questions"]), schema.get("format", "lines")))
             fits = CANVAS_LEN - 1 - len(THOUGHT_OPEN) - len(THOUGHT_CLOSE) - len(answer)
             if fits < 8:
@@ -876,7 +885,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": {"message": "unknown route"}})
 
     def _raw_chat(self):
-        """vLLM's chat completions, body and status passed through."""
+        """Pass the body and status through to vLLM's chat completions."""
         raw = self.rfile.read(int(self.headers.get("content-length", "0")))
         req = urllib.request.Request(ARGS.upstream.rstrip("/") + "/v1/chat/completions", data=raw,
                                      headers={"content-type": self.headers.get("content-type", "application/json")})
@@ -918,8 +927,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {
             "model": ARGS.model,
             "answers": answers,
-            # vLLM's prompt count when the reads reported one (it covers images);
-            # the tokenizer's count of the text prompt otherwise.
+            # vLLM's prompt count when the reads reported one, since it covers
+            # images. Otherwise the tokenizer's count of the text prompt.
             "usage": {"input_tokens": body["diagnostics"].get("prompt_tokens")
                       or (len(chat_prompt_ids(system_text(schema), state)) if isinstance(state, str) else 0),
                       "output_tokens": completion_tokens},
@@ -937,7 +946,7 @@ class Handler(BaseHTTPRequestHandler):
             has_image = isinstance(content, list) and any(
                 isinstance(p, dict) and p.get("type") in ("image_url", "image") for p in content)
             if has_image:
-                # image parts pass through to vLLM as they are; any text part is context
+                # image parts pass through to vLLM unchanged, with text parts as context
                 state = content
             else:
                 state = message_text(msgs[1]).strip()
@@ -998,7 +1007,7 @@ def main():
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8011)
     p.add_argument("--tls-port", type=int, default=0, help="also listen with HTTPS here (0 = off)")
-    p.add_argument("--cert-dir", default=os.path.expanduser("~/.cache/djev"), help="where the self-signed certificate lives")
+    p.add_argument("--cert-dir", default=os.path.expanduser("~/.cache/djev"), help="directory for the self-signed certificate")
     ARGS = p.parse_args()
     CANVAS_LEN = ARGS.canvas
     CANVAS_STEP = ARGS.canvas_step
