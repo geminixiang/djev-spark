@@ -23,6 +23,7 @@ RUN git clone --filter=blob:none --quiet "${VLLM_FORK}" /fork \
     && git fetch --filter=blob:none --quiet "${VLLM_UPSTREAM}" "${VLLM_BASE}" \
     && mb=$(git merge-base "${VLLM_BASE}" HEAD) \
     && git diff --name-only "$mb" HEAD -- vllm > /fork/changed.txt \
+    && git diff --name-only --diff-filter=A "$mb" HEAD -- vllm > /fork/added.txt \
     && cat /fork/changed.txt \
     && if ! git diff --quiet "$mb" "${VLLM_BASE}" -- $(cat /fork/changed.txt); then \
          echo "upstream changed overlaid files between the branch base and ${VLLM_BASE}; rebase the branch first" >&2; \

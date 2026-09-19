@@ -3,9 +3,10 @@
 usage: overlay_vllm.py <fork checkout> <base commit>
 
 The checkout carries changed.txt, the paths under vllm/ that differ from the
-base commit. The base image's vLLM must report that commit in its version and
-every target file must already exist, or the build stops: an overlay onto a
-different vLLM would import and then fail in ways that look like model bugs.
+base commit, and added.txt, the subset the fork creates. The base image's vLLM
+must report that commit in its version, and a target outside added.txt must
+already exist, or the build stops: an overlay onto a different vLLM would
+import and then fail in ways that look like model bugs.
 """
 import importlib.metadata
 import importlib.util
@@ -25,7 +26,15 @@ if f"+g{short}" not in version:
     )
 
 site = pathlib.Path(importlib.util.find_spec("vllm").origin).parent
-changed = [line.strip() for line in (fork / "changed.txt").read_text().splitlines() if line.strip()]
+def paths(name):
+    f = fork / name
+    if not f.exists():
+        return []
+    return [line.strip() for line in f.read_text().splitlines() if line.strip()]
+
+
+changed = paths("changed.txt")
+added = set(paths("added.txt"))
 if not changed:
     raise SystemExit("changed.txt is empty; the fork ref carries no vllm/ changes")
 
@@ -33,7 +42,9 @@ for rel in changed:
     src = fork / rel
     dst = site / pathlib.Path(rel).relative_to("vllm")
     if not dst.exists():
-        raise SystemExit(f"{dst} is not in the base image; the base moved")
+        if rel not in added:
+            raise SystemExit(f"{dst} is not in the base image; the base moved")
+        dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dst)
     for pyc in (dst.parent / "__pycache__").glob(dst.stem + ".*.pyc"):
         pyc.unlink()
