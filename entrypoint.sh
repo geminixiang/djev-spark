@@ -68,8 +68,9 @@ echo "vllm ready on :${PORT}"
 # without touching vLLM. Only vLLM's exit ends the container.
 serve_structured() {
   while kill -0 "$VLLM_PID" 2>/dev/null; do
+    # A reload signals the server, and set -e would take this loop down with it.
     python3 /opt/dgemma/structured_server.py --upstream "http://127.0.0.1:${PORT}" --model "$SERVED_NAME" \
-      --tokenizer "$MODEL" --canvas "$CANVAS" --port "$STRUCTURED_PORT" --tls-port "$TLS_PORT" --cert-dir /root/.cache/djev
+      --tokenizer "$MODEL" --canvas "$CANVAS" --port "$STRUCTURED_PORT" --tls-port "$TLS_PORT" --cert-dir /root/.cache/djev || true
     echo "structured server exited; restarting" >&2
     sleep 1
   done
