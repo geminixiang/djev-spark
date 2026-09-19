@@ -15,7 +15,7 @@ ARG BASE=vllm/vllm-openai:nightly-dee37d89115db4c94a820a79a78a7828e141c910
 FROM alpine/git:latest AS fork
 ARG VLLM_FORK=https://github.com/mmastrac/vllm.git
 ARG VLLM_UPSTREAM=https://github.com/vllm-project/vllm.git
-ARG VLLM_REF=7f996ae682d9b3c8720774748bee8c7db545605e
+ARG VLLM_REF=6591b093b29536dd070c6af3628b734025c53e23
 ARG VLLM_BASE=dee37d89115db4c94a820a79a78a7828e141c910
 RUN git clone --filter=blob:none --quiet "${VLLM_FORK}" /fork \
     && cd /fork \
