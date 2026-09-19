@@ -212,8 +212,6 @@ FORMATS = {
 def system_text(schema, chunked=False):
     s = ("Answer a fixed set of questions about the state the user provides. "
          "Each question lists its allowed answers; reply with exactly one label per question.\n")
-    if schema.get("instructions"):
-        s += "\n" + str(schema["instructions"]).strip() + "\n"
     for q in schema["questions"]:
         s += f"\nQuestion {q['id']}: {q['instructions'].strip()}\n"
         for (name, desc), label in zip(q["choices"], q["labels"]):
@@ -226,6 +224,10 @@ def system_text(schema, chunked=False):
     s += "\n" + FORMATS[schema.get("format", "lines")][2]
     if chunked:
         s += " A reply may cover only some of the questions; answer every line that is present."
+    # Last, because the prefix cache keeps only the text before the first byte
+    # that varies, and a request's own instructions are that byte.
+    if schema.get("instructions"):
+        s += "\n\n" + str(schema["instructions"]).strip()
     return s
 
 
