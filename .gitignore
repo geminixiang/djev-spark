@@ -2,3 +2,5 @@
 models/
 cache/
 __pycache__/
+*.log
+*.bak*
